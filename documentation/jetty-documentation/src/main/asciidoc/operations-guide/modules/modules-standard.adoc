@@ -14,6 +14,7 @@
 [[og-modules-standard]]
 ==== Standard Modules
 
+include::module-alpn.adoc[]
 include::module-bytebufferpool.adoc[]
 include::module-deploy.adoc[]
 include::module-http.adoc[]
@@ -21,6 +22,7 @@ include::module-http2.adoc[]
 include::module-http2c.adoc[]
 include::module-http-forwarded.adoc[]
 include::module-https.adoc[]
+include::module-jmx-remote.adoc[]
 include::module-server.adoc[]
 include::module-ssl.adoc[]
 include::module-ssl-reload.adoc[]

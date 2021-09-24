@@ -1195,6 +1195,34 @@ public class ServletHandler extends ScopedHandler
         }
     }
 
+    public void removeFilterHolder(FilterHolder holder)
+    {
+        if (holder == null)
+            return;
+
+        try (AutoLock ignored = lock())
+        {
+            FilterHolder[] holders = Arrays.stream(getFilters())
+                .filter(h -> h != holder)
+                .toArray(FilterHolder[]::new);
+            setFilters(holders);
+        }
+    }
+
+    public void removeFilterMapping(FilterMapping mapping)
+    {
+        if (mapping == null)
+            return;
+
+        try (AutoLock ignored = lock())
+        {
+            FilterMapping[] mappings = Arrays.stream(getFilterMappings())
+                .filter(m -> m != mapping)
+                .toArray(FilterMapping[]::new);
+            setFilterMappings(mappings);
+        }
+    }
+
     protected void updateNameMappings()
     {
         try (AutoLock ignored = lock())
@@ -1494,8 +1522,10 @@ public class ServletHandler extends ScopedHandler
                 switch (pathSpec.getGroup())
                 {
                     case EXACT:
-                    case ROOT:
                         _servletPathMapping = new ServletPathMapping(_pathSpec, _servletHolder.getName(), _pathSpec.getPrefix());
+                        break;
+                    case ROOT:
+                        _servletPathMapping = new ServletPathMapping(_pathSpec, _servletHolder.getName(), "/");
                         break;
                     default:
                         _servletPathMapping = null;
@@ -1579,6 +1609,11 @@ public class ServletHandler extends ScopedHandler
         {
             Objects.requireNonNull(holder);
             _servletHolder = holder;
+        }
+
+        public ServletHolder getServletHolder()
+        {
+            return _servletHolder;
         }
 
         @Override

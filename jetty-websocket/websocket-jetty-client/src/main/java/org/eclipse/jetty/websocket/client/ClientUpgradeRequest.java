@@ -50,11 +50,15 @@ public final class ClientUpgradeRequest implements UpgradeRequest
         this.host = null;
     }
 
+    /**
+     * @deprecated use {@link #ClientUpgradeRequest()} instead.
+     */
+    @Deprecated
     public ClientUpgradeRequest(URI uri)
     {
         this.requestURI = uri;
         String scheme = uri.getScheme();
-        if (!HttpScheme.WS.is(scheme) || !HttpScheme.WSS.is(scheme))
+        if (!HttpScheme.WS.is(scheme) && !HttpScheme.WSS.is(scheme))
             throw new IllegalArgumentException("URI scheme must be 'ws' or 'wss'");
         this.host = this.requestURI.getHost();
     }
@@ -153,7 +157,7 @@ public final class ClientUpgradeRequest implements UpgradeRequest
     @Override
     public String getQueryString()
     {
-        return requestURI.getQuery();
+        return requestURI == null ? null : requestURI.getQuery();
     }
 
     @Override

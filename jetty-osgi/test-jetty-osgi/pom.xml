@@ -2,7 +2,7 @@
   <parent>
     <groupId>org.eclipse.jetty.osgi</groupId>
     <artifactId>jetty-osgi-project</artifactId>
-    <version>10.0.2-SNAPSHOT</version>
+    <version>10.0.7-SNAPSHOT</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
   <modelVersion>4.0.0</modelVersion>
@@ -15,7 +15,6 @@
     <assembly-directory>target/distribution</assembly-directory>
     <pax.exam.version>4.13.1</pax.exam.version>
     <pax.url.version>2.6.2</pax.url.version>
-    <bnd.version>5.2.0</bnd.version>
     <swissbox.version>1.8.3</swissbox.version>
     <tinybundles.version>3.0.0</tinybundles.version>
     <injection.bundle.version>1.2</injection.bundle.version>
@@ -107,7 +106,6 @@
     <dependency>
       <groupId>biz.aQute.bnd</groupId>
       <artifactId>biz.aQute.bndlib</artifactId>
-      <version>${bnd.version}</version>
       <exclusions>
         <exclusion>
           <groupId>org.osgi</groupId>
@@ -135,6 +133,16 @@
     </dependency>
 
     <!-- Jetty OSGi Deps -->
+    <dependency>
+       <groupId>org.slf4j</groupId>
+       <artifactId>slf4j-api</artifactId>
+       <scope>test</scope>
+     </dependency>
+    <dependency>
+       <groupId>org.slf4j</groupId>
+       <artifactId>slf4j-simple</artifactId>
+       <scope>test</scope>
+     </dependency>
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-slf4j-impl</artifactId>
@@ -187,7 +195,6 @@
     <dependency>
       <groupId>org.apache.geronimo.specs</groupId>
       <artifactId>geronimo-jta_1.1_spec</artifactId>
-      <version>1.1.1</version>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -199,7 +206,7 @@
     <dependency>
       <groupId>org.apache.aries.spifly</groupId>
       <artifactId>org.apache.aries.spifly.dynamic.bundle</artifactId>
-      <version>1.3.2</version>
+      <version>1.3.4</version>
       <scope>test</scope>
       <exclusions>
         <exclusion>
@@ -209,80 +216,53 @@
       </exclusions>
     </dependency>
     <dependency>
-      <groupId>com.sun.activation</groupId>
-      <artifactId>javax.activation</artifactId>
-      <version>1.2.0</version>
+      <groupId>jakarta.activation</groupId>
+      <artifactId>jakarta.activation-api</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.glassfish.web</groupId>
       <artifactId>javax.servlet.jsp.jstl</artifactId>
-      <version>1.2.5</version>
-      <exclusions>
-        <exclusion>
-          <groupId>javax.servlet.jsp.jstl</groupId>
-          <artifactId>jstl-api</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>javax.servlet</groupId>
-          <artifactId>servlet-api</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>javax.servlet.jsp</groupId>
-          <artifactId>jsp-api</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>javax.el</groupId>
-          <artifactId>el-api</artifactId>
-        </exclusion>
-      </exclusions>
     </dependency>
     <dependency>
       <groupId>org.eclipse.jetty.orbit</groupId>
       <artifactId>javax.servlet.jsp.jstl</artifactId>
-      <version>1.2.0.v201105211821</version>
-      <exclusions>
-        <exclusion>
-          <groupId>org.eclipse.jetty.orbit</groupId>
-          <artifactId>javax.servlet</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>org.eclipse.jetty.orbit</groupId>
-          <artifactId>javax.servlet.jsp</artifactId>
-        </exclusion>
-      </exclusions>
     </dependency>
 
     <!-- Jetty Deps -->
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-annotations</artifactId>
-      <scope>runtime</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.eclipse.jetty</groupId>
-      <artifactId>jetty-webapp</artifactId>
-      <scope>runtime</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.eclipse.jetty</groupId>
-      <artifactId>jetty-deploy</artifactId>
-      <scope>runtime</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.eclipse.jetty</groupId>
-      <artifactId>jetty-server</artifactId>
       <version>${project.version}</version>
       <scope>runtime</scope>
     </dependency>
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-webapp</artifactId>
+      <version>${project.version}</version>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-deploy</artifactId>
+      <version>${project.version}</version>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-server</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-servlet</artifactId>
+      <version>${project.version}</version>
       <scope>runtime</scope>
     </dependency>
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-servlets</artifactId>
+      <version>${project.version}</version>
       <scope>runtime</scope>
     </dependency>
     <dependency>
@@ -300,6 +280,7 @@
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-jmx</artifactId>
+      <version>${project.version}</version>
       <scope>runtime</scope>
     </dependency>
     <dependency>
@@ -386,7 +367,6 @@
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-plus</artifactId>
-      <version>${project.version}</version>
       <scope>runtime</scope>
     </dependency>
 
@@ -558,7 +538,7 @@
             <dependency>
               <groupId>org.apache.maven.surefire</groupId>
               <artifactId>surefire-junit47</artifactId>
-              <version>${maven.surefire.version}</version>
+              <version>${maven.surefire.plugin.version}</version>
             </dependency>
           </dependencies>
         </plugin>

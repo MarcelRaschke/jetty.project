@@ -42,6 +42,7 @@ import org.eclipse.jetty.server.handler.HandlerWrapper;
 import org.eclipse.jetty.util.AsciiLowerCaseSet;
 import org.eclipse.jetty.util.IncludeExclude;
 import org.eclipse.jetty.util.StringUtil;
+import org.eclipse.jetty.util.compression.CompressionPool;
 import org.eclipse.jetty.util.compression.DeflaterPool;
 import org.eclipse.jetty.util.compression.InflaterPool;
 import org.slf4j.Logger;
@@ -202,9 +203,30 @@ public class GzipHandler extends HandlerWrapper implements GzipFactory
     protected void doStart() throws Exception
     {
         Server server = getServer();
-        _inflaterPool = InflaterPool.ensurePool(server);
-        _deflaterPool = DeflaterPool.ensurePool(server);
+        if (_inflaterPool == null)
+        {
+            _inflaterPool = InflaterPool.ensurePool(server);
+            addBean(_inflaterPool);
+        }
+        if (_deflaterPool == null)
+        {
+            _deflaterPool = DeflaterPool.ensurePool(server);
+            addBean(_deflaterPool);
+        }
+
         super.doStart();
+    }
+
+    @Override
+    protected void doStop() throws Exception
+    {
+        super.doStop();
+
+        removeBean(_inflaterPool);
+        _inflaterPool = null;
+
+        removeBean(_deflaterPool);
+        _deflaterPool = null;
     }
 
     /**
@@ -747,6 +769,17 @@ public class GzipHandler extends HandlerWrapper implements GzipFactory
     }
 
     /**
+     * Set the excluded filter list of MIME types (replacing any previously set)
+     *
+     * @param csvTypes The list of mime types to exclude (without charset or other parameters), CSV format
+     * @see #setIncludedMimeTypesList(String)
+     */
+    public void setExcludedMimeTypesList(String csvTypes)
+    {
+        setExcludedMimeTypes(StringUtil.csvSplit(csvTypes));
+    }
+
+    /**
      * Set the excluded filter list of Path specs (replacing any previously set)
      *
      * @param pathspecs Path specs (as per servlet spec) to exclude. If a
@@ -795,6 +828,17 @@ public class GzipHandler extends HandlerWrapper implements GzipFactory
     {
         _mimeTypes.getIncluded().clear();
         _mimeTypes.include(types);
+    }
+
+    /**
+     * Set the included filter list of MIME types (replacing any previously set)
+     *
+     * @param csvTypes The list of mime types to include (without charset or other parameters), CSV format
+     * @see #setExcludedMimeTypesList(String)
+     */
+    public void setIncludedMimeTypesList(String csvTypes)
+    {
+        setIncludedMimeTypes(StringUtil.csvSplit(csvTypes));
     }
 
     /**
@@ -872,45 +916,97 @@ public class GzipHandler extends HandlerWrapper implements GzipFactory
     }
 
     /**
+     * Get the DeflaterPool being used. The default value of this is null before starting, but after starting if it is null
+     * it will be set to the default DeflaterPool which is stored as a bean on the server.
+     * @return the DeflaterPool being used.
+     */
+    public DeflaterPool getDeflaterPool()
+    {
+        return _deflaterPool;
+    }
+
+    /**
+     * Get the InflaterPool being used. The default value of this is null before starting, but after starting if it is null
+     * it will be set to the default InflaterPool which is stored as a bean on the server.
+     * @return the DeflaterPool being used.
+     */
+    public InflaterPool getInflaterPool()
+    {
+        return _inflaterPool;
+    }
+
+    /**
+     * Set the DeflaterPool to be used. This should be called before starting.
+     * If this value is null when starting the default pool will be used from the server.
+     * @param deflaterPool the DeflaterPool to use.
+     */
+    public void setDeflaterPool(DeflaterPool deflaterPool)
+    {
+        if (isStarted())
+            throw new IllegalStateException(getState());
+
+        updateBean(_deflaterPool, deflaterPool);
+        _deflaterPool = deflaterPool;
+    }
+
+    /**
+     * Set the InflaterPool to be used. This should be called before starting.
+     * If this value is null when starting the default pool will be used from the server.
+     * @param inflaterPool the InflaterPool to use.
+     */
+    public void setInflaterPool(InflaterPool inflaterPool)
+    {
+        if (isStarted())
+            throw new IllegalStateException(getState());
+
+        updateBean(_inflaterPool, inflaterPool);
+        _inflaterPool = inflaterPool;
+    }
+
+    /**
      * Gets the maximum number of Deflaters that the DeflaterPool can hold.
      *
      * @return the Deflater pool capacity
+     * @deprecated for custom DeflaterPool settings use {@link #setDeflaterPool(DeflaterPool)}.
      */
+    @Deprecated
     public int getDeflaterPoolCapacity()
     {
-        return _deflaterPool.getCapacity();
+        return (_deflaterPool == null) ? CompressionPool.DEFAULT_CAPACITY : _deflaterPool.getCapacity();
     }
 
     /**
      * Sets the maximum number of Deflaters that the DeflaterPool can hold.
+     * @deprecated for custom DeflaterPool settings use {@link #setDeflaterPool(DeflaterPool)}.
      */
+    @Deprecated
     public void setDeflaterPoolCapacity(int capacity)
     {
-        if (isStarted())
-            throw new IllegalStateException(getState());
-
-        _deflaterPool.setCapacity(capacity);
+        if (_deflaterPool != null)
+            _deflaterPool.setCapacity(capacity);
     }
 
     /**
-     * Gets the maximum number of Inflators that the DeflaterPool can hold.
+     * Gets the maximum number of Inflaters that the InflaterPool can hold.
      *
-     * @return the Deflater pool capacity
+     * @return the Inflater pool capacity
+     * @deprecated for custom InflaterPool settings use {@link #setInflaterPool(InflaterPool)}.
      */
+    @Deprecated
     public int getInflaterPoolCapacity()
     {
-        return _inflaterPool.getCapacity();
+        return (_inflaterPool == null) ? CompressionPool.DEFAULT_CAPACITY : _inflaterPool.getCapacity();
     }
 
     /**
-     * Sets the maximum number of Inflators that the DeflaterPool can hold.
+     * Sets the maximum number of Inflaters that the InflaterPool can hold.
+     * @deprecated for custom InflaterPool settings use {@link #setInflaterPool(InflaterPool)}.
      */
+    @Deprecated
     public void setInflaterPoolCapacity(int capacity)
     {
-        if (isStarted())
-            throw new IllegalStateException(getState());
-
-        _inflaterPool.setCapacity(capacity);
+        if (_inflaterPool != null)
+            _inflaterPool.setCapacity(capacity);
     }
 
     @Override

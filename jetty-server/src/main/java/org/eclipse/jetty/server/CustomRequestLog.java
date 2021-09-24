@@ -16,12 +16,14 @@ package org.eclipse.jetty.server;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
+import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiPredicate;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -81,7 +83,7 @@ import static java.lang.invoke.MethodType.methodType;
  * </tr>
  *
  * <tr>
- * <td valign="top">%{format}a</td>
+ * <td>%{format}a</td>
  * <td>
  * Address or Hostname. Valid formats are {server, client, local, remote}
  * Optional format parameter which will be server by default.
@@ -92,7 +94,7 @@ import static java.lang.invoke.MethodType.methodType;
  * </tr>
  *
  * <tr>
- * <td valign="top">%{format}p</td>
+ * <td>%{format}p</td>
  * <td>
  * Port. Valid formats are {server, client, local, remote}
  * Optional format parameter which will be server by default.
@@ -103,7 +105,7 @@ import static java.lang.invoke.MethodType.methodType;
  * </tr>
  *
  * <tr>
- * <td valign="top">%{CLF}I</td>
+ * <td>%{CLF}I</td>
  * <td>
  * Size of request in bytes, excluding HTTP headers.
  * Optional parameter with value of "CLF" to use CLF format, i.e. a '-' rather than a 0 when no bytes are sent.
@@ -111,7 +113,7 @@ import static java.lang.invoke.MethodType.methodType;
  * </tr>
  *
  * <tr>
- * <td valign="top">%{CLF}O</td>
+ * <td>%{CLF}O</td>
  * <td>
  * Size of response in bytes, excluding HTTP headers.
  * Optional parameter with value of "CLF" to use CLF format, i.e. a '-' rather than a 0 when no bytes are sent.
@@ -119,7 +121,7 @@ import static java.lang.invoke.MethodType.methodType;
  * </tr>
  *
  * <tr>
- * <td valign="top">%{CLF}S</td>
+ * <td>%{CLF}S</td>
  * <td>
  * Bytes transferred (received and sent). This is the combination of %I and %O.
  * Optional parameter with value of "CLF" to use CLF format, i.e. a '-' rather than a 0 when no bytes are sent.
@@ -127,7 +129,7 @@ import static java.lang.invoke.MethodType.methodType;
  * </tr>
  *
  * <tr>
- * <td valign="top">%{VARNAME}C</td>
+ * <td>%{VARNAME}C</td>
  * <td>
  * The contents of cookie VARNAME in the request sent to the server. Only version 0 cookies are fully supported.
  * Optional VARNAME parameter, without this parameter %C will log all cookies from the request.
@@ -135,69 +137,69 @@ import static java.lang.invoke.MethodType.methodType;
  * </tr>
  *
  * <tr>
- * <td valign="top">%D</td>
+ * <td>%D</td>
  * <td>The time taken to serve the request, in microseconds.</td>
  * </tr>
  *
  * <tr>
- * <td valign="top">%{VARNAME}e</td>
+ * <td>%{VARNAME}e</td>
  * <td>The contents of the environment variable VARNAME.</td>
  * </tr>
  *
  * <tr>
- * <td valign="top">%f</td>
+ * <td>%f</td>
  * <td>Filename.</td>
  * </tr>
  *
  * <tr>
- * <td valign="top">%H</td>
- * <td>The request protocol.</td>
+ * <td>%H</td>
+ * <td>The name and version of the request protocol, such as "HTTP/1.1".</td>
  * </tr>
  *
  * <tr>
- * <td valign="top">%{VARNAME}i</td>
+ * <td>%{VARNAME}i</td>
  * <td>The contents of VARNAME: header line(s) in the request sent to the server.</td>
  * </tr>
  *
  * <tr>
- * <td valign="top">%k</td>
+ * <td>%k</td>
  * <td>Number of keepalive requests handled on this connection.
  * Interesting if KeepAlive is being used, so that, for example, a '1' means the first keepalive request
  * after the initial one, '2' the second, etc...; otherwise this is always 0 (indicating the initial request).</td>
  * </tr>
  *
  * <tr>
- * <td valign="top">%m</td>
+ * <td>%m</td>
  * <td>The request method.</td>
  * </tr>
  *
  * <tr>
- * <td valign="top">%{VARNAME}o</td>
+ * <td>%{VARNAME}o</td>
  * <td>The contents of VARNAME: header line(s) in the response.</td>
  * </tr>
  *
  * <tr>
- * <td valign="top">%q</td>
+ * <td>%q</td>
  * <td>The query string (prepended with a ? if a query string exists, otherwise an empty string).</td>
  * </tr>
  *
  * <tr>
- * <td valign="top">%r</td>
+ * <td>%r</td>
  * <td>First line of request.</td>
  * </tr>
  *
  * <tr>
- * <td valign="top">%R</td>
+ * <td>%R</td>
  * <td>The handler generating the response (if any).</td>
  * </tr>
  *
  * <tr>
- * <td valign="top">%s</td>
+ * <td>%s</td>
  * <td>Response status.</td>
  * </tr>
  *
  * <tr>
- * <td valign="top">%{format|timeZone|locale}t</td>
+ * <td>%{format|timeZone|locale}t</td>
  * <td>
  * The time that the request was received.
  * Optional parameter in one of the following formats {format}, {format|timeZone} or {format|timeZone|locale}.<br><br>
@@ -217,19 +219,19 @@ import static java.lang.invoke.MethodType.methodType;
  * </tr>
  *
  * <tr>
- * <td valign="top">%T</td>
+ * <td>%T</td>
  * <td>The time taken to serve the request, in seconds.</td>
  * </tr>
  *
  * <tr>
- * <td valign="top">%{UNIT}T</td>
+ * <td>%{UNIT}T</td>
  * <td>The time taken to serve the request, in a time unit given by UNIT.
  * Valid units are ms for milliseconds, us for microseconds, and s for seconds.
  * Using s gives the same result as %T without any format; using us gives the same result as %D.</td>
  * </tr>
  *
  * <tr>
- * <td valign="top">%{d}u</td>
+ * <td>%{d}u</td>
  * <td>
  * Remote user if the request was authenticated with servlet authentication. May be bogus if return status (%s) is 401 (unauthorized).
  * Optional parameter d, with this parameter deferred authentication will also be checked,
@@ -238,12 +240,12 @@ import static java.lang.invoke.MethodType.methodType;
  * </tr>
  *
  * <tr>
- * <td valign="top">%U</td>
+ * <td>%U</td>
  * <td>The URL path requested, not including any query string.</td>
  * </tr>
  *
  * <tr>
- * <td valign="top">%X</td>
+ * <td>%X</td>
  * <td>
  * Connection status when response is completed:
  * <pre>
@@ -254,7 +256,7 @@ import static java.lang.invoke.MethodType.methodType;
  * </tr>
  *
  * <tr>
- * <td valign="top">%{VARNAME}^ti</td>
+ * <td>%{VARNAME}^ti</td>
  * <td>The contents of VARNAME: trailer line(s) in the request sent to the server.</td>
  * </tr>
  *
@@ -279,6 +281,7 @@ public class CustomRequestLog extends ContainerLifeCycle implements RequestLog
     private final String _formatString;
     private transient PathMappings<String> _ignorePathMap;
     private String[] _ignorePaths;
+    private BiPredicate<Request, Response> _filter;
 
     public CustomRequestLog()
     {
@@ -311,6 +314,16 @@ public class CustomRequestLog extends ContainerLifeCycle implements RequestLog
         }
     }
 
+    /**
+     * This allows you to set a custom filter to decide whether to log a request or omit it from the request log.
+     * This filter is evaluated after path filtering is applied from {@link #setIgnorePaths(String[])}.
+     * @param filter - a BiPredicate which returns true if this request should be logged.
+     */
+    public void setFilter(BiPredicate<Request, Response> filter)
+    {
+        _filter = filter;
+    }
+
     @ManagedAttribute("The RequestLogWriter")
     public RequestLog.Writer getWriter()
     {
@@ -325,11 +338,14 @@ public class CustomRequestLog extends ContainerLifeCycle implements RequestLog
     @Override
     public void log(Request request, Response response)
     {
+        if (_ignorePathMap != null && _ignorePathMap.getMatch(request.getRequestURI()) != null)
+            return;
+
+        if (_filter != null && !_filter.test(request, response))
+            return;
+
         try
         {
-            if (_ignorePathMap != null && _ignorePathMap.getMatch(request.getRequestURI()) != null)
-                return;
-
             StringBuilder sb = _buffers.get();
             sb.setLength(0);
 
@@ -940,13 +956,15 @@ public class CustomRequestLog extends ContainerLifeCycle implements RequestLog
     @SuppressWarnings("unused")
     private static void logLocalHost(StringBuilder b, Request request, Response response)
     {
-        append(b, request.getHttpChannel().getEndPoint().getLocalAddress().getAddress().getHostAddress());
+        InetSocketAddress local = request.getHttpChannel().getLocalAddress();
+        append(b, local == null ? null : local.getAddress().getHostAddress());
     }
 
     @SuppressWarnings("unused")
     private static void logRemoteHost(StringBuilder b, Request request, Response response)
     {
-        append(b, request.getHttpChannel().getEndPoint().getRemoteAddress().getAddress().getHostAddress());
+        InetSocketAddress remote = request.getHttpChannel().getRemoteAddress();
+        append(b, remote == null ? null : remote.getAddress().getHostAddress());
     }
 
     @SuppressWarnings("unused")
@@ -964,13 +982,15 @@ public class CustomRequestLog extends ContainerLifeCycle implements RequestLog
     @SuppressWarnings("unused")
     private static void logLocalPort(StringBuilder b, Request request, Response response)
     {
-        b.append(request.getHttpChannel().getEndPoint().getLocalAddress().getPort());
+        InetSocketAddress local = request.getHttpChannel().getLocalAddress();
+        append(b, local == null ? null : String.valueOf(local.getPort()));
     }
 
     @SuppressWarnings("unused")
     private static void logRemotePort(StringBuilder b, Request request, Response response)
     {
-        b.append(request.getHttpChannel().getEndPoint().getRemoteAddress().getPort());
+        InetSocketAddress remote = request.getHttpChannel().getRemoteAddress();
+        append(b, remote == null ? null : String.valueOf(remote.getPort()));
     }
 
     @SuppressWarnings("unused")

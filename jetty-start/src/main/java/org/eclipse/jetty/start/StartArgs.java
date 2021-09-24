@@ -16,9 +16,7 @@ package org.eclipse.jetty.start;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -35,6 +33,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.StringTokenizer;
+import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
@@ -52,70 +51,54 @@ import org.eclipse.jetty.util.ManifestUtils;
 public class StartArgs
 {
     public static final String VERSION;
-    public static final Set<String> ALL_PARTS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
-        "java",
-        "opts",
-        "path",
-        "main",
-        "args")));
-    public static final Set<String> ARG_PARTS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
-        "args")));
+    public static final Set<String> ALL_PARTS = Set.of("java", "opts", "path", "main", "args");
+    public static final Set<String> ARG_PARTS = Set.of("args");
+
+    private static final String JETTY_VERSION_KEY = "jetty.version";
+    private static final String JETTY_TAG_NAME_KEY = "jetty.tag.version";
+    private static final String JETTY_BUILDNUM_KEY = "jetty.build";
 
     static
     {
         // Use command line versions
-        String ver = System.getProperty("jetty.version", null);
-        String tag = System.getProperty("jetty.tag.version", "master");
+        String ver = System.getProperty(JETTY_VERSION_KEY);
+        String tag = System.getProperty(JETTY_TAG_NAME_KEY);
 
         // Use META-INF/MANIFEST.MF versions
         if (ver == null)
         {
             ver = ManifestUtils.getManifest(StartArgs.class)
                 .map(Manifest::getMainAttributes)
-                .filter(attributes -> "Eclipse Jetty Project".equals(attributes.getValue("Implementation-Vendor")))
-                .map(attributes -> attributes.getValue("Implementation-Version"))
+                .filter(attributes -> "Eclipse Jetty Project".equals(attributes.getValue(Attributes.Name.IMPLEMENTATION_VENDOR)))
+                .map(attributes -> attributes.getValue(Attributes.Name.IMPLEMENTATION_VERSION))
                 .orElse(null);
         }
 
-        // Use jetty-version.properties values
-        if (ver == null)
+        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+        // use old jetty-version.properties (as seen within various linux distro repackaging of Jetty)
+        Props jettyVerProps = Props.load(classLoader, "jetty-version.properties");
+        // use build-time properties (included in start.jar) to pull version and buildNumber
+        Props buildProps = Props.load(classLoader, "org/eclipse/jetty/start/build.properties");
+
+        String sha = buildProps.getString("buildNumber", System.getProperty(JETTY_BUILDNUM_KEY));
+        if (Utils.isNotBlank(sha))
         {
-            URL url = Thread.currentThread().getContextClassLoader().getResource("jetty-version.properties");
-            if (url != null)
-            {
-                try (InputStream in = url.openStream())
-                {
-                    Properties props = new Properties();
-                    props.load(in);
-                    ver = props.getProperty("jetty.version");
-                }
-                catch (IOException x)
-                {
-                    StartLog.debug(x);
-                }
-            }
+            System.setProperty(JETTY_BUILDNUM_KEY, sha);
         }
 
-        // Default values
-        if (ver == null)
+        if (Utils.isBlank(ver))
         {
-            ver = "0.0";
-            if (tag == null)
-                tag = "master";
-        }
-        else
-        {
-            if (tag == null)
-                tag = "jetty-" + ver;
+            ver = jettyVerProps.getString("version", buildProps.getString("version", "0.0"));
         }
 
-        // Set Tag Defaults
-        if (tag.contains("-SNAPSHOT"))
-            tag = "master";
+        if (Utils.isBlank(tag))
+        {
+            tag = jettyVerProps.getString("tag", buildProps.getString("tag", "jetty-" + ver));
+        }
 
         VERSION = ver;
-        System.setProperty("jetty.version", VERSION);
-        System.setProperty("jetty.tag.version", tag);
+        System.setProperty(JETTY_VERSION_KEY, VERSION);
+        System.setProperty(JETTY_TAG_NAME_KEY, tag);
     }
 
     private static final String MAIN_CLASS = "org.eclipse.jetty.xml.XmlConfiguration";
@@ -126,12 +109,12 @@ public class StartArgs
     /**
      * List of enabled modules
      */
-    private List<String> modules = new ArrayList<>();
+    private final List<String> modules = new ArrayList<>();
 
     /**
      * List of modules to skip [files] section validation
      */
-    private Set<String> skipFileValidationModules = new HashSet<>();
+    private final Set<String> skipFileValidationModules = new HashSet<>();
 
     /**
      * Map of enabled modules to the source of where that activation occurred
@@ -141,56 +124,56 @@ public class StartArgs
     /**
      * List of all active [files] sections from enabled modules
      */
-    private List<FileArg> files = new ArrayList<>();
+    private final List<FileArg> files = new ArrayList<>();
 
     /**
      * List of all active [lib] sections from enabled modules
      */
-    private Classpath classpath;
+    private final Classpath classpath;
 
     /**
      * List of all active [xml] sections from enabled modules
      */
-    private List<Path> xmls = new ArrayList<>();
+    private final List<Path> xmls = new ArrayList<>();
 
     /**
      * List of all active [jpms] sections for enabled modules
      */
-    private Set<String> jmodAdds = new LinkedHashSet<>();
-    private Map<String, Set<String>> jmodPatch = new LinkedHashMap<>();
-    private Map<String, Set<String>> jmodOpens = new LinkedHashMap<>();
-    private Map<String, Set<String>> jmodExports = new LinkedHashMap<>();
-    private Map<String, Set<String>> jmodReads = new LinkedHashMap<>();
+    private final Set<String> jmodAdds = new LinkedHashSet<>();
+    private final Map<String, Set<String>> jmodPatch = new LinkedHashMap<>();
+    private final Map<String, Set<String>> jmodOpens = new LinkedHashMap<>();
+    private final Map<String, Set<String>> jmodExports = new LinkedHashMap<>();
+    private final Map<String, Set<String>> jmodReads = new LinkedHashMap<>();
 
     /**
      * JVM arguments, found via command line and in all active [exec] sections from enabled modules
      */
-    private List<String> jvmArgs = new ArrayList<>();
+    private final List<String> jvmArgs = new ArrayList<>();
 
     /**
      * List of all xml references found directly on command line or start.ini
      */
-    private List<String> xmlRefs = new ArrayList<>();
+    private final List<String> xmlRefs = new ArrayList<>();
 
     /**
      * List of all property references found directly on command line or start.ini
      */
-    private List<String> propertyFileRefs = new ArrayList<>();
+    private final List<String> propertyFileRefs = new ArrayList<>();
 
     /**
      * List of all property files
      */
-    private List<Path> propertyFiles = new ArrayList<>();
+    private final List<Path> propertyFiles = new ArrayList<>();
 
-    private Props properties = new Props();
-    private Map<String, String> systemPropertySource = new HashMap<>();
-    private List<String> rawLibs = new ArrayList<>();
+    private final Props properties = new Props();
+    private final Map<String, String> systemPropertySource = new HashMap<>();
+    private final List<String> rawLibs = new ArrayList<>();
 
     // jetty.base - build out commands
     /**
      * --add-module=[module,[module]]
      */
-    private List<String> startModules = new ArrayList<>();
+    private final List<String> startModules = new ArrayList<>();
 
     // module inspection commands
     /**
@@ -319,9 +302,10 @@ public class StartArgs
         // Jetty Environment
         System.out.println();
         System.out.println("Jetty Environment:");
-        System.out.println("-----------------");
-        dumpProperty("jetty.version");
-        dumpProperty("jetty.tag.version");
+        System.out.println("------------------");
+        dumpProperty(JETTY_VERSION_KEY);
+        dumpProperty(JETTY_TAG_NAME_KEY);
+        dumpProperty(JETTY_BUILDNUM_KEY);
         dumpProperty("jetty.home");
         dumpProperty("jetty.base");
 
@@ -346,26 +330,20 @@ public class StartArgs
 
     public void dumpJvmArgs()
     {
-        System.out.println();
-        System.out.println("JVM Arguments:");
-        System.out.println("--------------");
         if (jvmArgs.isEmpty())
-        {
-            System.out.println(" (no jvm args specified)");
             return;
-        }
+
+        System.out.println();
+        System.out.println("Forked JVM Arguments:");
+        System.out.println("---------------------");
 
         for (String jvmArgKey : jvmArgs)
         {
             String value = System.getProperty(jvmArgKey);
             if (value != null)
-            {
                 System.out.printf(" %s = %s%n", jvmArgKey, value);
-            }
             else
-            {
                 System.out.printf(" %s%n", jvmArgKey);
-            }
         }
     }
 

@@ -14,6 +14,7 @@
 package org.eclipse.jetty.http2.client.http;
 
 import java.nio.channels.AsynchronousCloseException;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
@@ -24,6 +25,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.eclipse.jetty.client.ConnectionPool;
 import org.eclipse.jetty.client.HttpChannel;
 import org.eclipse.jetty.client.HttpConnection;
 import org.eclipse.jetty.client.HttpDestination;
@@ -45,7 +47,7 @@ import org.eclipse.jetty.util.thread.Sweeper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class HttpConnectionOverHTTP2 extends HttpConnection implements Sweeper.Sweepable
+public class HttpConnectionOverHTTP2 extends HttpConnection implements Sweeper.Sweepable, ConnectionPool.Multiplexable
 {
     private static final Logger LOG = LoggerFactory.getLogger(HttpConnection.class);
 
@@ -75,6 +77,18 @@ public class HttpConnectionOverHTTP2 extends HttpConnection implements Sweeper.S
     public void setRecycleHttpChannels(boolean recycleHttpChannels)
     {
         this.recycleHttpChannels = recycleHttpChannels;
+    }
+
+    @Override
+    public int getMaxMultiplex()
+    {
+        return ((HTTP2Session)session).getMaxLocalStreams();
+    }
+
+    @Override
+    protected Iterator<HttpChannel> getHttpChannels()
+    {
+        return activeChannels.iterator();
     }
 
     @Override
@@ -151,7 +165,7 @@ public class HttpConnectionOverHTTP2 extends HttpConnection implements Sweeper.S
         return new HttpChannelOverHTTP2(getHttpDestination(), this, getSession());
     }
 
-    protected void release(HttpChannelOverHTTP2 channel)
+    protected boolean release(HttpChannelOverHTTP2 channel)
     {
         if (LOG.isDebugEnabled())
             LOG.debug("Released {}", channel);
@@ -162,10 +176,12 @@ public class HttpConnectionOverHTTP2 extends HttpConnection implements Sweeper.S
                 channel.destroy();
             else if (isRecycleHttpChannels())
                 idleChannels.offer(channel);
+            return true;
         }
         else
         {
             channel.destroy();
+            return false;
         }
     }
 
@@ -182,6 +198,7 @@ public class HttpConnectionOverHTTP2 extends HttpConnection implements Sweeper.S
     public void close()
     {
         close(new AsynchronousCloseException());
+        destroy();
     }
 
     protected void close(Throwable failure)

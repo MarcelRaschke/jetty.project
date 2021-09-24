@@ -19,6 +19,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -40,6 +41,8 @@ import org.eclipse.jetty.io.ClientConnectionFactory;
 import org.eclipse.jetty.io.ClientConnector;
 import org.eclipse.jetty.io.Connection;
 import org.eclipse.jetty.io.EndPoint;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * <p>A {@link HttpClientTransport} that can dynamically switch among different application protocols.</p>
@@ -78,6 +81,8 @@ import org.eclipse.jetty.io.EndPoint;
  */
 public class HttpClientTransportDynamic extends AbstractConnectorHttpClientTransport
 {
+    private static final Logger LOG = LoggerFactory.getLogger(HttpClientTransportDynamic.class);
+
     private final List<ClientConnectionFactory.Info> factoryInfos;
     private final List<String> protocols;
 
@@ -86,7 +91,12 @@ public class HttpClientTransportDynamic extends AbstractConnectorHttpClientTrans
      */
     public HttpClientTransportDynamic()
     {
-        this(new ClientConnector(), HttpClientConnectionFactory.HTTP11);
+        this(HttpClientConnectionFactory.HTTP11);
+    }
+
+    public HttpClientTransportDynamic(ClientConnectionFactory.Info... factoryInfos)
+    {
+        this(findClientConnector(factoryInfos), factoryInfos);
     }
 
     /**
@@ -98,7 +108,6 @@ public class HttpClientTransportDynamic extends AbstractConnectorHttpClientTrans
     public HttpClientTransportDynamic(ClientConnector connector, ClientConnectionFactory.Info... factoryInfos)
     {
         super(connector);
-        addBean(connector);
         if (factoryInfos.length == 0)
             factoryInfos = new Info[]{HttpClientConnectionFactory.HTTP11};
         this.factoryInfos = Arrays.asList(factoryInfos);
@@ -110,6 +119,15 @@ public class HttpClientTransportDynamic extends AbstractConnectorHttpClientTrans
         Arrays.stream(factoryInfos).forEach(this::addBean);
         setConnectionPoolFactory(destination ->
                 new MultiplexConnectionPool(destination, destination.getHttpClient().getMaxConnectionsPerDestination(), destination, 1));
+    }
+
+    private static ClientConnector findClientConnector(ClientConnectionFactory.Info[] infos)
+    {
+        return Arrays.stream(infos)
+            .map(info -> info.getBean(ClientConnector.class))
+            .filter(Objects::nonNull)
+            .findFirst()
+            .orElse(new ClientConnector());
     }
 
     @Override

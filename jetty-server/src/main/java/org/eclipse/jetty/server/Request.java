@@ -67,7 +67,6 @@ import javax.servlet.http.WebConnection;
 import org.eclipse.jetty.http.BadMessageException;
 import org.eclipse.jetty.http.ComplianceViolation;
 import org.eclipse.jetty.http.HostPortHttpField;
-import org.eclipse.jetty.http.HttpCompliance;
 import org.eclipse.jetty.http.HttpCookie;
 import org.eclipse.jetty.http.HttpCookie.SetCookieHttpField;
 import org.eclipse.jetty.http.HttpField;
@@ -449,6 +448,7 @@ public class Request implements HttpServletRequest
                 }
                 catch (IllegalStateException | IllegalArgumentException e)
                 {
+                    LOG.warn(e.toString());
                     throw new BadMessageException("Unable to parse form content", e);
                 }
             }
@@ -985,7 +985,7 @@ public class Request implements HttpServletRequest
                 String name = InetAddress.getLocalHost().getHostAddress();
                 if (StringUtil.ALL_INTERFACES.equals(name))
                     return null;
-                return HostPort.normalizeHost(name);
+                return formatAddrOrHost(name);
             }
             catch (UnknownHostException e)
             {
@@ -1001,7 +1001,7 @@ public class Request implements HttpServletRequest
         String result = address == null
             ? local.getHostString()
             : address.getHostAddress();
-        return HostPort.normalizeHost(result);
+        return formatAddrOrHost(result);
     }
 
     @Override
@@ -1011,7 +1011,7 @@ public class Request implements HttpServletRequest
         {
             InetSocketAddress local = _channel.getLocalAddress();
             if (local != null)
-                return HostPort.normalizeHost(local.getHostString());
+                return formatAddrOrHost(local.getHostString());
         }
 
         try
@@ -1019,7 +1019,7 @@ public class Request implements HttpServletRequest
             String name = InetAddress.getLocalHost().getHostName();
             if (StringUtil.ALL_INTERFACES.equals(name))
                 return null;
-            return HostPort.normalizeHost(name);
+            return formatAddrOrHost(name);
         }
         catch (UnknownHostException e)
         {
@@ -1211,12 +1211,10 @@ public class Request implements HttpServletRequest
 
         InetAddress address = remote.getAddress();
         String result = address == null
-            ? remote.getHostString()
-            : address.getHostAddress();
-        // Add IPv6 brackets if necessary, to be consistent
-        // with cases where _remote has been built from other
-        // sources such as forward headers or PROXY protocol.
-        return HostPort.normalizeHost(result);
+                ? remote.getHostString()
+                : address.getHostAddress();
+
+        return formatAddrOrHost(result);
     }
 
     @Override
@@ -1227,8 +1225,9 @@ public class Request implements HttpServletRequest
             remote = _channel.getRemoteAddress();
         if (remote == null)
             return "";
+
         // We want the URI host, so add IPv6 brackets if necessary.
-        return HostPort.normalizeHost(remote.getHostString());
+        return formatAddrOrHost(remote.getHostString());
     }
 
     @Override
@@ -1252,10 +1251,6 @@ public class Request implements HttpServletRequest
     @Override
     public RequestDispatcher getRequestDispatcher(String path)
     {
-        // path is encoded, potentially with query
-
-        path = URIUtil.compactPath(path);
-
         if (path == null || _context == null)
             return null;
 
@@ -1326,7 +1321,7 @@ public class Request implements HttpServletRequest
     @Override
     public String getServerName()
     {
-        return _uri == null ? findServerName() : _uri.getHost();
+        return _uri == null ? findServerName() : formatAddrOrHost(_uri.getHost());
     }
 
     private String findServerName()
@@ -1334,12 +1329,12 @@ public class Request implements HttpServletRequest
         // Return host from connection
         String name = getLocalName();
         if (name != null)
-            return HostPort.normalizeHost(name);
+            return formatAddrOrHost(name);
 
         // Return the local host
         try
         {
-            return HostPort.normalizeHost(InetAddress.getLocalHost().getHostAddress());
+            return formatAddrOrHost(InetAddress.getLocalHost().getHostAddress());
         }
         catch (UnknownHostException e)
         {
@@ -1691,17 +1686,13 @@ public class Request implements HttpServletRequest
         _method = request.getMethod();
         _httpFields = request.getFields();
         final HttpURI uri = request.getURI();
-
-        boolean ambiguous = uri.isAmbiguous();
-        if (ambiguous)
+        UriCompliance compliance = null;
+        if (uri.hasViolations())
         {
-            UriCompliance compliance = _channel == null || _channel.getHttpConfiguration() == null ? null : _channel.getHttpConfiguration().getUriCompliance();
-            if (uri.hasAmbiguousSegment() && (compliance == null || !compliance.allows(UriCompliance.Violation.AMBIGUOUS_PATH_SEGMENT)))
-                throw new BadMessageException("Ambiguous segment in URI");
-            if (uri.hasAmbiguousSeparator() && (compliance == null || !compliance.allows(UriCompliance.Violation.AMBIGUOUS_PATH_SEPARATOR)))
-                throw new BadMessageException("Ambiguous segment in URI");
-            if (uri.hasAmbiguousParameter() && (compliance == null || !compliance.allows(UriCompliance.Violation.AMBIGUOUS_PATH_PARAMETER)))
-                throw new BadMessageException("Ambiguous path parameter in URI");
+            compliance = _channel == null || _channel.getHttpConfiguration() == null ? null : _channel.getHttpConfiguration().getUriCompliance();
+            String badMessage = UriCompliance.checkUriCompliance(compliance, uri);
+            if (badMessage != null)
+                throw new BadMessageException(badMessage);
         }
 
         if (uri.isAbsolute() && uri.hasAuthority() && uri.getPath() != null)
@@ -1733,7 +1724,6 @@ public class Request implements HttpServletRequest
             }
             _uri = builder.asImmutable();
         }
-
         setSecure(HttpScheme.HTTPS.is(_uri.getScheme()));
 
         String encoded = _uri.getPath();
@@ -1744,17 +1734,15 @@ public class Request implements HttpServletRequest
         else if (encoded.startsWith("/"))
         {
             path = (encoded.length() == 1) ? "/" : _uri.getDecodedPath();
-            // Strictly speaking if a URI is legal and encodes ambiguous segments, then they should be
-            // reflected in the decoded string version.  However, it can be ambiguous to provide a decoded path as
-            // a string, so we normalize again.  If an application wishes to see ambiguous URIs, then they can look
-            // at the encoded form of the URI
-            if (ambiguous)
-                path = URIUtil.canonicalPath(path);
         }
         else if ("*".equals(encoded) || HttpMethod.CONNECT.is(getMethod()))
+        {
             path = encoded;
+        }
         else
+        {
             path = null;
+        }
 
         if (path == null || path.isEmpty())
         {
@@ -2551,5 +2539,10 @@ public class Request implements HttpServletRequest
         // INCLUDE dispatch, in which case this method returns the mapping of the source servlet,
         // which we recover from the IncludeAttributes wrapper.
         return findServletPathMapping();
+    }
+    
+    private String formatAddrOrHost(String name)
+    {
+        return _channel == null ? HostPort.normalizeHost(name) : _channel.formatAddrOrHost(name);
     }
 }

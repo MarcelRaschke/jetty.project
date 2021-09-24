@@ -4,7 +4,7 @@
   <parent>
     <groupId>org.eclipse.jetty.tests</groupId>
     <artifactId>test-sessions-parent</artifactId>
-    <version>10.0.2-SNAPSHOT</version>
+    <version>10.0.7-SNAPSHOT</version>
   </parent>
   <artifactId>test-gcloud-sessions</artifactId>
   <name>Jetty Tests :: Sessions :: GCloud</name>
@@ -27,7 +27,6 @@
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-server</artifactId>
-      <version>${project.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -72,7 +71,6 @@
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>gcloud</artifactId>
-      <version>${testcontainers.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>

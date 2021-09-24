@@ -3,7 +3,7 @@
   <parent>
     <artifactId>jetty-project</artifactId>
     <groupId>org.eclipse.jetty</groupId>
-    <version>10.0.2-SNAPSHOT</version>
+    <version>10.0.7-SNAPSHOT</version>
   </parent>
 
   <modelVersion>4.0.0</modelVersion>
@@ -33,7 +33,6 @@
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-http</artifactId>
-      <version>${project.version}</version>
     </dependency>
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
@@ -54,7 +53,6 @@
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-io</artifactId>
-      <version>${project.version}</version>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>

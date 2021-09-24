@@ -19,6 +19,7 @@ import javax.websocket.ClientEndpointConfig;
 import javax.websocket.EndpointConfig;
 
 import org.eclipse.jetty.websocket.core.CoreSession;
+import org.eclipse.jetty.websocket.core.WebSocketComponents;
 import org.eclipse.jetty.websocket.javax.common.decoders.AvailableDecoders;
 import org.eclipse.jetty.websocket.javax.common.encoders.AvailableEncoders;
 import org.junit.jupiter.api.AfterAll;
@@ -27,17 +28,21 @@ import org.junit.jupiter.api.BeforeAll;
 public abstract class AbstractJavaxWebSocketFrameHandlerTest
 {
     protected static DummyContainer container;
+    private static WebSocketComponents components;
 
     @BeforeAll
     public static void initContainer() throws Exception
     {
         container = new DummyContainer();
         container.start();
+        components = new WebSocketComponents();
+        components.start();
     }
 
     @AfterAll
     public static void stopContainer() throws Exception
     {
+        components.stop();
         container.stop();
     }
 
@@ -45,13 +50,21 @@ public abstract class AbstractJavaxWebSocketFrameHandlerTest
     protected AvailableDecoders decoders;
     protected Map<String, String> uriParams;
     protected EndpointConfig endpointConfig;
-    protected CoreSession coreSession = new CoreSession.Empty();
+    protected CoreSession coreSession = new CoreSession.Empty()
+    {
+
+        @Override
+        public WebSocketComponents getWebSocketComponents()
+        {
+            return components;
+        }
+    };
 
     public AbstractJavaxWebSocketFrameHandlerTest()
     {
         endpointConfig = ClientEndpointConfig.Builder.create().build();
-        encoders = new AvailableEncoders(endpointConfig);
-        decoders = new AvailableDecoders(endpointConfig);
+        encoders = new AvailableEncoders(endpointConfig, coreSession.getWebSocketComponents());
+        decoders = new AvailableDecoders(endpointConfig, coreSession.getWebSocketComponents());
         uriParams = new HashMap<>();
     }
 

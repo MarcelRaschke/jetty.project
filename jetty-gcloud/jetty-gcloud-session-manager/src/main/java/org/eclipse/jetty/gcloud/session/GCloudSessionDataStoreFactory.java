@@ -22,10 +22,12 @@ import org.eclipse.jetty.server.session.SessionHandler;
  */
 public class GCloudSessionDataStoreFactory extends AbstractSessionDataStoreFactory
 {
-    private String _namespace;
-    private int _maxRetries;
-    private int _backoffMs;
+    private String _namespace = GCloudSessionDataStore.DEFAULT_NAMESPACE;
+    private int _maxRetries = GCloudSessionDataStore.DEFAULT_MAX_RETRIES;
+    private int _backoffMs = GCloudSessionDataStore.DEFAULT_BACKOFF_MS;
     private GCloudSessionDataStore.EntityDataModel _model;
+    private String _host;
+    private String _projectId;
 
     public GCloudSessionDataStore.EntityDataModel getEntityDataModel()
     {
@@ -73,6 +75,26 @@ public class GCloudSessionDataStoreFactory extends AbstractSessionDataStoreFacto
         _namespace = namespace;
     }
 
+    public void setHost(String host)
+    {
+        _host = host;
+    }
+
+    public String getHost()
+    {
+        return _host;
+    }
+
+    public void setProjectId(String projectId)
+    {
+        _projectId = projectId;
+    }
+
+    public String getProjectId()
+    {
+        return _projectId;
+    }
+
     @Override
     public SessionDataStore getSessionDataStore(SessionHandler handler) throws Exception
     {
@@ -80,8 +102,11 @@ public class GCloudSessionDataStoreFactory extends AbstractSessionDataStoreFacto
         ds.setBackoffMs(getBackoffMs());
         ds.setMaxRetries(getMaxRetries());
         ds.setGracePeriodSec(getGracePeriodSec());
-        ds.setNamespace(_namespace);
+        ds.setNamespace(getNamespace());
         ds.setSavePeriodSec(getSavePeriodSec());
+        ds.setEntityDataModel(getEntityDataModel());
+        ds.setHost(getHost());
+        ds.setProjectId(getProjectId());
         return ds;
     }
 }

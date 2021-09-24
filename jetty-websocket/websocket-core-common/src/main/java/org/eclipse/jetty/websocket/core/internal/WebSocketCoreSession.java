@@ -80,9 +80,11 @@ public class WebSocketCoreSession implements IncomingFrames, CoreSession, Dumpab
     private long maxTextMessageSize = WebSocketConstants.DEFAULT_MAX_TEXT_MESSAGE_SIZE;
     private Duration idleTimeout = WebSocketConstants.DEFAULT_IDLE_TIMEOUT;
     private Duration writeTimeout = WebSocketConstants.DEFAULT_WRITE_TIMEOUT;
+    private ClassLoader classLoader;
 
     public WebSocketCoreSession(FrameHandler handler, Behavior behavior, Negotiated negotiated, WebSocketComponents components)
     {
+        this.classLoader = Thread.currentThread().getContextClassLoader();
         this.components = components;
         this.handler = handler;
         this.behavior = behavior;
@@ -91,13 +93,32 @@ public class WebSocketCoreSession implements IncomingFrames, CoreSession, Dumpab
         negotiated.getExtensions().initialize(new IncomingAdaptor(), new OutgoingAdaptor(), this);
     }
 
+    public ClassLoader getClassLoader()
+    {
+        return classLoader;
+    }
+
+    public void setClassLoader(ClassLoader classLoader)
+    {
+        this.classLoader = classLoader;
+    }
+
     /**
      * Can be overridden to scope into the correct classloader before calling application code.
      * @param runnable the runnable to execute.
      */
     protected void handle(Runnable runnable)
     {
-        runnable.run();
+        ClassLoader oldClassLoader = Thread.currentThread().getContextClassLoader();
+        try
+        {
+            Thread.currentThread().setContextClassLoader(classLoader);
+            runnable.run();
+        }
+        finally
+        {
+            Thread.currentThread().setContextClassLoader(oldClassLoader);
+        }
     }
 
     /**
@@ -154,12 +175,18 @@ public class WebSocketCoreSession implements IncomingFrames, CoreSession, Dumpab
 
     public SocketAddress getLocalAddress()
     {
-        return getConnection().getEndPoint().getLocalAddress();
+        return getConnection().getEndPoint().getLocalSocketAddress();
     }
 
     public SocketAddress getRemoteAddress()
     {
-        return getConnection().getEndPoint().getRemoteAddress();
+        return getConnection().getEndPoint().getRemoteSocketAddress();
+    }
+
+    @Override
+    public boolean isInputOpen()
+    {
+        return sessionState.isInputOpen();
     }
 
     @Override
@@ -395,8 +422,10 @@ public class WebSocketCoreSession implements IncomingFrames, CoreSession, Dumpab
     {
         if (!demanding)
             throw new IllegalStateException("FrameHandler is not demanding: " + this);
+
         if (!sessionState.isInputOpen())
             throw new IllegalStateException("FrameHandler input not open: " + this);
+
         connection.demand(n);
     }
 
