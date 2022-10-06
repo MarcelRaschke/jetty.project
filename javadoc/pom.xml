@@ -72,7 +72,7 @@
             </goals>
             <configuration>
               <target>
-                <mkdir dir="${sources-directory}" />
+                <mkdir dir="${sources-directory}"/>
               </target>
             </configuration>
           </execution>
@@ -427,7 +427,7 @@
     <dependency>
       <groupId>org.infinispan.protostream</groupId>
       <artifactId>protostream</artifactId>
-      <version>4.2.2.Final</version>
+      <version>4.2.4.Final</version>
       <scope>provided</scope>
     </dependency>
   </dependencies>
