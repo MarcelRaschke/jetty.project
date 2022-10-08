@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -31,7 +31,12 @@ public abstract class AbstractPathSpec implements PathSpec
             return diff;
 
         // Path Spec Name (alphabetical)
-        return getDeclaration().compareTo(other.getDeclaration());
+        diff = getDeclaration().compareTo(other.getDeclaration());
+        if (diff != 0)
+            return diff;
+
+        // Path Implementation
+        return getClass().getName().compareTo(other.getClass().getName());
     }
 
     @Override
@@ -50,7 +55,7 @@ public abstract class AbstractPathSpec implements PathSpec
     @Override
     public final int hashCode()
     {
-        return Objects.hash(getDeclaration());
+        return Objects.hash(getGroup().ordinal(), getSpecLength(), getDeclaration(), getClass().getName());
     }
 
     @Override

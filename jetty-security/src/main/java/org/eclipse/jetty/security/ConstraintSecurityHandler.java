@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -34,7 +34,9 @@ import javax.servlet.annotation.ServletSecurity.TransportGuarantee;
 
 import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.http.pathmap.MappedResource;
+import org.eclipse.jetty.http.pathmap.MatchedResource;
 import org.eclipse.jetty.http.pathmap.PathMappings;
+import org.eclipse.jetty.http.pathmap.PathSpec;
 import org.eclipse.jetty.server.HttpConfiguration;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.Response;
@@ -422,7 +424,7 @@ public class ConstraintSecurityHandler extends SecurityHandler implements Constr
      */
     protected void processConstraintMapping(ConstraintMapping mapping)
     {
-        Map<String, RoleInfo> mappings = _constraintRoles.get(PathMappings.asPathSpec(mapping.getPathSpec()));
+        Map<String, RoleInfo> mappings = _constraintRoles.get(asPathSpec(mapping));
         if (mappings == null)
         {
             mappings = new HashMap<>();
@@ -465,6 +467,13 @@ public class ConstraintSecurityHandler extends SecurityHandler implements Constr
                 mappings.put(ALL_METHODS, roleInfo);
             }
         }
+    }
+
+    protected PathSpec asPathSpec(ConstraintMapping mapping)
+    {
+        // As currently written, this allows regex patterns to be used.
+        // This may not be supported by default in future releases.
+        return PathMappings.asPathSpec(mapping.getPathSpec());
     }
 
     /**
@@ -567,7 +576,7 @@ public class ConstraintSecurityHandler extends SecurityHandler implements Constr
     @Override
     protected RoleInfo prepareConstraintInfo(String pathInContext, Request request)
     {
-        MappedResource<Map<String, RoleInfo>> resource = _constraintRoles.getMatch(pathInContext);
+        MatchedResource<Map<String, RoleInfo>> resource = _constraintRoles.getMatched(pathInContext);
         if (resource == null)
             return null;
 

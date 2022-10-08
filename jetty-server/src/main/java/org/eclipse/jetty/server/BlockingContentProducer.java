@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -46,6 +46,14 @@ class BlockingContentProducer implements ContentProducer
         if (LOG.isDebugEnabled())
             LOG.debug("recycling {}", this);
         _asyncContentProducer.recycle();
+    }
+
+    @Override
+    public void reopen()
+    {
+        if (LOG.isDebugEnabled())
+            LOG.debug("reopening {}", this);
+        _asyncContentProducer.reopen();
         _semaphore.drainPermits();
     }
 
@@ -80,9 +88,9 @@ class BlockingContentProducer implements ContentProducer
     }
 
     @Override
-    public boolean consumeAll(Throwable x)
+    public boolean consumeAll()
     {
-        boolean eof = _asyncContentProducer.consumeAll(x);
+        boolean eof = _asyncContentProducer.consumeAll();
         _semaphore.release();
         return eof;
     }
@@ -152,17 +160,21 @@ class BlockingContentProducer implements ContentProducer
     {
         _semaphore.assertLocked();
         // In blocking mode, the dispatched thread normally does not have to be rescheduled as it is normally in state
-        // DISPATCHED blocked on the semaphore that just needs to be released for the dispatched thread to resume. This is why
-        // this method always returns false.
+        // DISPATCHED blocked on the semaphore that just needs to be released for the dispatched thread to resume.
+        // This is why this method always returns false.
         // But async errors can occur while the dispatched thread is NOT blocked reading (i.e.: in state WAITING),
-        // so the WAITING to WOKEN transition must be done by the error-notifying thread which then has to reschedule the
-        // dispatched thread after HttpChannelState.asyncError() is called.
-        // Calling _asyncContentProducer.wakeup() changes the channel state from WAITING to WOKEN which would prevent the
-        // subsequent call to HttpChannelState.asyncError() from rescheduling the thread.
+        // so the WAITING to WOKEN transition must be done by the error-notifying thread which then has to reschedule
+        // the dispatched thread after HttpChannelState.asyncError() is called.
+        // Calling _asyncContentProducer.onContentProducible() changes the channel state from WAITING to WOKEN which
+        // would prevent the subsequent call to HttpChannelState.asyncError() from rescheduling the thread.
         // AsyncServletTest.testStartAsyncThenClientStreamIdleTimeout() tests this.
+        boolean unready = _asyncContentProducer.isUnready();
         if (LOG.isDebugEnabled())
-            LOG.debug("onContentProducible releasing semaphore {}", _semaphore);
-        _semaphore.release();
+            LOG.debug("onContentProducible releasing semaphore {} unready={}", _semaphore, unready);
+        // Do not release the semaphore if we are not unready, as certain protocols may call this method
+        // just after having received the request, not only when they have read all the available content.
+        if (unready)
+            _semaphore.release();
         return false;
     }
 }

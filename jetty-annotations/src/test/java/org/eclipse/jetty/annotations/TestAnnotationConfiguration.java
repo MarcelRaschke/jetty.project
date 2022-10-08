@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -16,18 +16,10 @@ package org.eclipse.jetty.annotations;
 import java.io.File;
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import javax.servlet.ServletContainerInitializer;
-import javax.servlet.ServletContext;
-import javax.servlet.ServletException;
 
-import org.eclipse.jetty.annotations.AnnotationConfiguration.ClassInheritanceMap;
-import org.eclipse.jetty.annotations.AnnotationConfiguration.DiscoveredServletContainerInitializerHolder;
-import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.toolchain.test.FS;
 import org.eclipse.jetty.toolchain.test.JAR;
 import org.eclipse.jetty.toolchain.test.MavenTestingUtils;

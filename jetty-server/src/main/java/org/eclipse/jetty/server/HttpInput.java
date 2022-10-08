@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -55,8 +55,12 @@ public class HttpInput extends ServletInputStream implements Runnable
 
     public void recycle()
     {
-        if (LOG.isDebugEnabled())
-            LOG.debug("recycle {}", this);
+        try (AutoLock lock = _contentProducer.lock())
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("recycle {}", this);
+            _blockingContentProducer.recycle();
+        }
     }
 
     public void reopen()
@@ -65,7 +69,7 @@ public class HttpInput extends ServletInputStream implements Runnable
         {
             if (LOG.isDebugEnabled())
                 LOG.debug("reopen {}", this);
-            _blockingContentProducer.recycle();
+            _blockingContentProducer.reopen();
             _contentProducer = _blockingContentProducer;
             _consumedEof = false;
             _readListener = null;
@@ -133,6 +137,26 @@ public class HttpInput extends ServletInputStream implements Runnable
         return consumed;
     }
 
+    private int get(Content content, ByteBuffer des)
+    {
+        var capacity = des.remaining();
+        var src = content.getByteBuffer();
+        if (src.remaining() > capacity)
+        {
+            int limit = src.limit();
+            src.limit(src.position() + capacity);
+            des.put(src);
+            src.limit(limit);
+        }
+        else
+        {
+            des.put(src);
+        }
+        var consumed = capacity - des.remaining();
+        _contentConsumed.add(consumed);
+        return consumed;
+    }
+
     public long getContentConsumed()
     {
         return _contentConsumed.sum();
@@ -150,10 +174,9 @@ public class HttpInput extends ServletInputStream implements Runnable
     {
         try (AutoLock lock = _contentProducer.lock())
         {
-            IOException failure = new IOException("Unconsumed content");
             if (LOG.isDebugEnabled())
-                LOG.debug("consumeAll {}", this, failure);
-            boolean atEof = _contentProducer.consumeAll(failure);
+                LOG.debug("consumeAll {}", this);
+            boolean atEof = _contentProducer.consumeAll();
             if (atEof)
                 _consumedEof = true;
 
@@ -246,6 +269,16 @@ public class HttpInput extends ServletInputStream implements Runnable
     @Override
     public int read(byte[] b, int off, int len) throws IOException
     {
+        return read(null, b, off, len);
+    }
+
+    public int read(ByteBuffer buffer) throws IOException
+    {
+        return read(buffer, null, -1, -1);
+    }
+
+    private int read(ByteBuffer buffer, byte[] b, int off, int len) throws IOException
+    {
         try (AutoLock lock = _contentProducer.lock())
         {
             // Calculate minimum request rate for DoS protection
@@ -256,7 +289,7 @@ public class HttpInput extends ServletInputStream implements Runnable
                 throw new IllegalStateException("read on unready input");
             if (!content.isSpecial())
             {
-                int read = get(content, b, off, len);
+                int read = buffer == null ? get(content, b, off, len) : get(content, buffer);
                 if (LOG.isDebugEnabled())
                     LOG.debug("read produced {} byte(s) {}", read, this);
                 if (content.isEmpty())
@@ -411,12 +444,57 @@ public class HttpInput extends ServletInputStream implements Runnable
             " eof=" + _consumedEof;
     }
 
+    /**
+     * <p>{@link Content} interceptor that can be registered using {@link #setInterceptor(Interceptor)} or
+     * {@link #addInterceptor(Interceptor)}.
+     * When {@link Content} instances are generated, they are passed to the registered interceptor (if any)
+     * that is then responsible for providing the actual content that is consumed by {@link #read(byte[], int, int)} and its
+     * sibling methods.</p>
+     * A minimal implementation could be as simple as:
+     * <pre>
+     * public HttpInput.Content readFrom(HttpInput.Content content)
+     * {
+     *     LOGGER.debug("read content: {}", asString(content));
+     *     return content;
+     * }
+     * </pre>
+     * which would not do anything with the content besides logging it. A more involved implementation could look like the
+     * following:
+     * <pre>
+     * public HttpInput.Content readFrom(HttpInput.Content content)
+     * {
+     *     if (content.hasContent())
+     *         this.processedContent = processContent(content.getByteBuffer());
+     *     if (content.isEof())
+     *         disposeResources();
+     *     return content.isSpecial() ? content : this.processedContent;
+     * }
+     * </pre>
+     * Implementors of this interface must keep the following in mind:
+     * <ul>
+     *     <li>Calling {@link Content#getByteBuffer()} when {@link Content#isSpecial()} returns <code>true</code> throws
+     *     {@link IllegalStateException}.</li>
+     *     <li>A {@link Content} can both be non-special and have {@link Content#isEof()} return <code>true</code>.</li>
+     *     <li>{@link Content} extends {@link Callback} to manage the lifecycle of the contained byte buffer. The code calling
+     *     {@link #readFrom(Content)} is responsible for managing the lifecycle of both the passed and the returned content
+     *     instances, once {@link ByteBuffer#hasRemaining()} returns <code>false</code> {@link HttpInput} will make sure
+     *     {@link Callback#succeeded()} is called, or {@link Callback#failed(Throwable)} if an error occurs.</li>
+     *     <li>After {@link #readFrom(Content)} is called for the first time, subsequent {@link #readFrom(Content)} calls will
+     *     occur only after the contained byte buffer is empty (see above) or at any time if the returned content was special.</li>
+     *     <li>Once {@link #readFrom(Content)} returned a special content, subsequent calls to {@link #readFrom(Content)} must
+     *     always return the same special content.</li>
+     *     <li>Implementations implementing both this interface and {@link Destroyable} will have their
+     *     {@link Destroyable#destroy()} method called when {@link #recycle()} is called.</li>
+     * </ul>
+     * @see org.eclipse.jetty.server.handler.gzip.GzipHttpInputInterceptor
+     */
     public interface Interceptor
     {
         /**
          * @param content The content to be intercepted.
-         * The content will be modified with any data the interceptor consumes, but there is no requirement
-         * that all the data is consumed by the interceptor.
+         * The content will be modified with any data the interceptor consumes. There is no requirement
+         * that all the data is consumed by the interceptor but at least one byte must be consumed
+         * unless the returned content is the passed content instance.
          * @return The intercepted content or null if interception is completed for that content.
          */
         Content readFrom(Content content);
@@ -563,7 +641,9 @@ public class HttpInput extends ServletInputStream implements Runnable
         }
 
         /**
-         * Check if the content is special.
+         * Check if the content is special. A content is deemed special
+         * if it does not hold bytes but rather conveys a special event,
+         * like when EOF has been reached or an error has occurred.
          * @return true if the content is special, false otherwise.
          */
         public boolean isSpecial()

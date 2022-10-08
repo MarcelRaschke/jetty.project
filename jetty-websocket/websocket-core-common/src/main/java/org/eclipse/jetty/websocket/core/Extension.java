@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -13,15 +13,24 @@
 
 package org.eclipse.jetty.websocket.core;
 
+import java.io.Closeable;
+
 /**
  * Interface for WebSocket Extensions.
  * <p>
  * That {@link Frame}s are passed through the Extension via the {@link IncomingFrames} and {@link OutgoingFrames} interfaces
  */
-public interface Extension extends IncomingFrames, OutgoingFrames
+public interface Extension extends IncomingFrames, OutgoingFrames, Closeable
 {
 
     void init(ExtensionConfig config, WebSocketComponents components);
+
+    /**
+     * Used to clean up any resources after connection close.
+     */
+    default void close()
+    {
+    }
 
     /**
      * The active configuration for this extension.

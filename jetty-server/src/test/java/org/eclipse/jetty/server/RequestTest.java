@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -14,13 +14,15 @@
 package org.eclipse.jetty.server;
 
 import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Reader;
 import java.io.UnsupportedEncodingException;
+import java.net.Inet6Address;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -28,14 +30,15 @@ import java.security.Principal;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
-import javax.servlet.DispatcherType;
 import javax.servlet.MultipartConfigElement;
 import javax.servlet.ServletException;
 import javax.servlet.ServletInputStream;
@@ -51,15 +54,21 @@ import org.eclipse.jetty.http.BadMessageException;
 import org.eclipse.jetty.http.CookieCompliance;
 import org.eclipse.jetty.http.HttpCompliance;
 import org.eclipse.jetty.http.HttpCookie;
+import org.eclipse.jetty.http.HttpField;
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpHeader;
+import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.http.HttpTester;
 import org.eclipse.jetty.http.HttpURI;
 import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.http.MetaData;
 import org.eclipse.jetty.http.MimeTypes;
 import org.eclipse.jetty.http.UriCompliance;
+import org.eclipse.jetty.http.pathmap.MatchedPath;
+import org.eclipse.jetty.http.pathmap.RegexPathSpec;
 import org.eclipse.jetty.http.pathmap.ServletPathSpec;
+import org.eclipse.jetty.io.Connection;
+import org.eclipse.jetty.io.EndPoint;
 import org.eclipse.jetty.logging.StacklessLogging;
 import org.eclipse.jetty.server.LocalConnector.LocalEndPoint;
 import org.eclipse.jetty.server.handler.AbstractHandler;
@@ -68,16 +77,14 @@ import org.eclipse.jetty.server.handler.ErrorHandler;
 import org.eclipse.jetty.server.session.Session;
 import org.eclipse.jetty.server.session.SessionData;
 import org.eclipse.jetty.server.session.SessionHandler;
-import org.eclipse.jetty.toolchain.test.FS;
-import org.eclipse.jetty.toolchain.test.MavenTestingUtils;
 import org.eclipse.jetty.toolchain.test.jupiter.WorkDir;
 import org.eclipse.jetty.toolchain.test.jupiter.WorkDirExtension;
 import org.eclipse.jetty.util.BufferUtil;
 import org.eclipse.jetty.util.IO;
+import org.eclipse.jetty.util.NanoTime;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.slf4j.Logger;
@@ -109,12 +116,37 @@ public class RequestTest
     private Server _server;
     private LocalConnector _connector;
     private RequestHandler _handler;
+    private boolean _normalizeAddress = true;
 
     @BeforeEach
     public void init() throws Exception
     {
         _server = new Server();
-        HttpConnectionFactory http = new HttpConnectionFactory();
+        HttpConnectionFactory http = new HttpConnectionFactory()
+        {
+            @Override
+            public Connection newConnection(Connector connector, EndPoint endPoint)
+            {
+                HttpConnection conn = new HttpConnection(getHttpConfiguration(), connector, endPoint, isRecordHttpComplianceViolations())
+                {
+                    @Override
+                    protected HttpChannelOverHttp newHttpChannel()
+                    {
+                        return new HttpChannelOverHttp(this, getConnector(), getHttpConfiguration(), getEndPoint(), this)
+                        {
+                            @Override
+                            protected String formatAddrOrHost(String addr)
+                            {
+                                if (_normalizeAddress)
+                                    return super.formatAddrOrHost(addr);
+                                return addr;
+                            }
+                        };
+                    }
+                };
+                return configure(conn, connector, endPoint);
+            }
+        };
         http.setInputBufferSize(1024);
         http.getHttpConfiguration().setRequestHeaderSize(512);
         http.getHttpConfiguration().setResponseHeaderSize(512);
@@ -225,6 +257,64 @@ public class RequestTest
 
         String responses = _connector.getResponse(request);
         assertTrue(responses.startsWith("HTTP/1.1 200"));
+    }
+
+    @Test
+    public void testParameterExtractionKeepOrderingIntact() throws Exception
+    {
+        AtomicReference<Map<String, String[]>> reference = new AtomicReference<>();
+        _handler._checker = new RequestTester()
+        {
+            @Override
+            public boolean check(HttpServletRequest request, HttpServletResponse response)
+            {
+                reference.set(request.getParameterMap());
+                return true;
+            }
+        };
+
+        String request = "POST /?first=1&second=2&third=3&fourth=4 HTTP/1.1\r\n" +
+            "Host: whatever\r\n" +
+            "Content-Type: application/x-www-form-urlencoded\n" +
+            "Connection: close\n" +
+            "Content-Length: 34\n" +
+            "\n" +
+            "fifth=5&sixth=6&seventh=7&eighth=8";
+
+        String responses = _connector.getResponse(request);
+        assertTrue(responses.startsWith("HTTP/1.1 200"));
+        assertThat(new ArrayList<>(reference.get().keySet()), is(Arrays.asList("first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth")));
+    }
+
+    @Test
+    public void testParameterExtractionOrderingWithMerge() throws Exception
+    {
+        AtomicReference<Map<String, String[]>> reference = new AtomicReference<>();
+        _handler._checker = new RequestTester()
+        {
+            @Override
+            public boolean check(HttpServletRequest request, HttpServletResponse response)
+            {
+                reference.set(request.getParameterMap());
+                return true;
+            }
+        };
+
+        String request = "POST /?a=1&b=2&c=3&a=4 HTTP/1.1\r\n" +
+            "Host: whatever\r\n" +
+            "Content-Type: application/x-www-form-urlencoded\n" +
+            "Connection: close\n" +
+            "Content-Length: 11\n" +
+            "\n" +
+            "c=5&b=6&a=7";
+
+        String responses = _connector.getResponse(request);
+        Map<String, String[]> returnedMap = reference.get();
+        assertTrue(responses.startsWith("HTTP/1.1 200"));
+        assertThat(new ArrayList<>(returnedMap.keySet()), is(Arrays.asList("a", "b", "c")));
+        assertTrue(Arrays.equals(returnedMap.get("a"), new String[]{"1", "4", "7"}));
+        assertTrue(Arrays.equals(returnedMap.get("b"), new String[]{"2", "6"}));
+        assertTrue(Arrays.equals(returnedMap.get("c"), new String[]{"3", "5"}));
     }
 
     @Test
@@ -415,6 +505,7 @@ public class RequestTest
             "--AaB03x\r\n" +
             "content-disposition: form-data; name=\"stuff\"; filename=\"foo.upload\"\r\n" +
             "Content-Type: text/plain;charset=ISO-8859-1\r\n" +
+            "Content-Transfer-Encoding: something\r\n" +
             "\r\n" +
             "000000000000000000000000000000000000000000000000000\r\n" +
             "--AaB03x--\r\n";
@@ -428,7 +519,9 @@ public class RequestTest
 
         LocalEndPoint endPoint = _connector.connect();
         endPoint.addInput(request);
-        assertTrue(endPoint.getResponse().startsWith("HTTP/1.1 200"));
+        String response = endPoint.getResponse();
+        assertTrue(response.startsWith("HTTP/1.1 200"));
+        assertThat(response, containsString("Violation: TRANSFER_ENCODING"));
 
         // We know the previous request has completed if another request can be processed on the same connection.
         String cleanupRequest = "GET /foo/cleanup HTTP/1.1\r\n" +
@@ -439,6 +532,54 @@ public class RequestTest
         endPoint.addInput(cleanupRequest);
         assertTrue(endPoint.getResponse().startsWith("HTTP/1.1 200"));
         assertThat("File Count in dir: " + testTmpDir, getFileCount(testTmpDir), is(0L));
+    }
+
+    @Test
+    public void testLegacyMultiPart() throws Exception
+    {
+        Path testTmpDir = workDir.getEmptyPathDir();
+
+        // We should have two tmp files after parsing the multipart form.
+        RequestTester tester = (request, response) ->
+        {
+            try (Stream<Path> s = Files.list(testTmpDir))
+            {
+                return s.count() == 2;
+            }
+        };
+
+        ContextHandler contextHandler = new ContextHandler();
+        contextHandler.setContextPath("/foo");
+        contextHandler.setResourceBase(".");
+        contextHandler.setHandler(new MultiPartRequestHandler(testTmpDir.toFile(), tester));
+        _server.stop();
+        _server.setHandler(contextHandler);
+        _connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().setMultiPartFormDataCompliance(MultiPartFormDataCompliance.LEGACY);
+        _server.start();
+
+        String multipart = "      --AaB03x\r" +
+            "content-disposition: form-data; name=\"field1\"\r" +
+            "\r" +
+            "Joe Blow\r" +
+            "--AaB03x\r" +
+            "content-disposition: form-data; name=\"stuff\"; filename=\"foo.upload\"\r" +
+            "Content-Type: text/plain;charset=ISO-8859-1\r" +
+            "\r" +
+            "000000000000000000000000000000000000000000000000000\r" +
+            "--AaB03x--\r";
+
+        String request = "GET /foo/x.html HTTP/1.1\r\n" +
+            "Host: whatever\r\n" +
+            "Content-Type: multipart/form-data; boundary=\"AaB03x\"\r\n" +
+            "Content-Length: " + multipart.getBytes().length + "\r\n" +
+            "Connection: close\r\n" +
+            "\r\n" +
+            multipart;
+
+        String responses = _connector.getResponse(request);
+        assertThat(responses, Matchers.startsWith("HTTP/1.1 200"));
+        assertThat(responses, Matchers.containsString("Violation: CR_LINE_TERMINATION"));
+        assertThat(responses, Matchers.containsString("Violation: NO_CRLF_AFTER_PREAMBLE"));
     }
 
     @Test
@@ -717,6 +858,52 @@ public class RequestTest
     }
 
     @Test
+    public void testConnectRequestURLSameAsHost() throws Exception
+    {
+        final AtomicReference<String> resultRequestURL = new AtomicReference<>();
+        final AtomicReference<String> resultRequestURI = new AtomicReference<>();
+        _handler._checker = (request, response) ->
+        {
+            resultRequestURL.set(request.getRequestURL().toString());
+            resultRequestURI.set(request.getRequestURI());
+            return true;
+        };
+
+        String rawResponse = _connector.getResponse(
+            "CONNECT myhost:9999 HTTP/1.1\n" +
+                "Host: myhost:9999\n" +
+                "Connection: close\n" +
+                "\n");
+        HttpTester.Response response = HttpTester.parseResponse(rawResponse);
+        assertThat(response.getStatus(), is(HttpStatus.OK_200));
+        assertThat("request.getRequestURL", resultRequestURL.get(), is("http://myhost:9999/"));
+        assertThat("request.getRequestURI", resultRequestURI.get(), is("/"));
+    }
+
+    @Test
+    public void testConnectRequestURLDifferentThanHost() throws Exception
+    {
+        final AtomicReference<String> resultRequestURL = new AtomicReference<>();
+        final AtomicReference<String> resultRequestURI = new AtomicReference<>();
+        _handler._checker = (request, response) ->
+        {
+            resultRequestURL.set(request.getRequestURL().toString());
+            resultRequestURI.set(request.getRequestURI());
+            return true;
+        };
+
+        String rawResponse = _connector.getResponse(
+            "CONNECT myhost:9999 HTTP/1.1\n" +
+                "Host: otherhost:8888\n" + // per spec, this is ignored if request-target is authority-form
+                "Connection: close\n" +
+                "\n");
+        HttpTester.Response response = HttpTester.parseResponse(rawResponse);
+        assertThat(response.getStatus(), is(HttpStatus.OK_200));
+        assertThat("request.getRequestURL", resultRequestURL.get(), is("http://myhost:9999/"));
+        assertThat("request.getRequestURI", resultRequestURI.get(), is("/"));
+    }
+
+    @Test
     public void testHostPort() throws Exception
     {
         final ArrayList<String> results = new ArrayList<>();
@@ -860,6 +1047,65 @@ public class RequestTest
         assertEquals("remote", results.get(i++));
         assertEquals("[::1]", results.get(i++));
         assertEquals("8888", results.get(i));
+    }
+
+    @Test
+    public void testIPv6() throws Exception
+    {
+        final ArrayList<String> results = new ArrayList<>();
+        final InetAddress local = Inet6Address.getByAddress("localIPv6", new byte[]{
+            0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8
+        });
+        final InetSocketAddress localAddr = new InetSocketAddress(local, 32768);
+        _handler._checker = new RequestTester()
+        {
+            @Override
+            public boolean check(HttpServletRequest request, HttpServletResponse response)
+            {
+                ((Request)request).setRemoteAddr(localAddr);
+                results.add(request.getRemoteAddr());
+                results.add(request.getRemoteHost());
+                results.add(Integer.toString(request.getRemotePort()));
+                results.add(request.getServerName());
+                results.add(Integer.toString(request.getServerPort()));
+                results.add(request.getLocalAddr());
+                results.add(Integer.toString(request.getLocalPort()));
+                return true;
+            }
+        };
+
+        _normalizeAddress = true;
+        String response = _connector.getResponse(
+            "GET / HTTP/1.1\n" +
+                "Host: [::1]:8888\n" +
+                "Connection: close\n" +
+                "\n");
+        int i = 0;
+        assertThat(response, containsString("200 OK"));
+        assertEquals("[1:2:3:4:5:6:7:8]", results.get(i++));
+        assertEquals("localIPv6", results.get(i++));
+        assertEquals("32768", results.get(i++));
+        assertEquals("[::1]", results.get(i++));
+        assertEquals("8888", results.get(i++));
+        assertEquals("0.0.0.0", results.get(i++));
+        assertEquals("0", results.get(i));
+
+        _normalizeAddress = false;
+        results.clear();
+        response = _connector.getResponse(
+            "GET / HTTP/1.1\n" +
+                "Host: [::1]:8888\n" +
+                "Connection: close\n" +
+                "\n");
+        i = 0;
+        assertThat(response, containsString("200 OK"));
+        assertEquals("1:2:3:4:5:6:7:8", results.get(i++));
+        assertEquals("localIPv6", results.get(i++));
+        assertEquals("32768", results.get(i++));
+        assertEquals("[::1]", results.get(i++));
+        assertEquals("8888", results.get(i++));
+        assertEquals("0.0.0.0", results.get(i++));
+        assertEquals("0", results.get(i));
     }
 
     @Test
@@ -1010,75 +1256,6 @@ public class RequestTest
             content;
         String response = _connector.getResponse(request);
         assertThat(response, containsString(" 200 OK"));
-    }
-
-    @Test
-    @Disabled("See issue #1175")
-    public void testMultiPartFormDataReadInputThenParams() throws Exception
-    {
-        final File tmpdir = MavenTestingUtils.getTargetTestingDir("multipart");
-        FS.ensureEmpty(tmpdir);
-
-        Handler handler = new AbstractHandler()
-        {
-            @Override
-            public void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) throws IOException
-            {
-                if (baseRequest.getDispatcherType() != DispatcherType.REQUEST)
-                    return;
-
-                // Fake a @MultiPartConfig'd servlet endpoint
-                MultipartConfigElement multipartConfig = new MultipartConfigElement(tmpdir.getAbsolutePath());
-                request.setAttribute(Request.__MULTIPART_CONFIG_ELEMENT, multipartConfig);
-
-                // Normal processing
-                baseRequest.setHandled(true);
-
-                // Fake the commons-fileupload behavior
-                int length = request.getContentLength();
-                InputStream in = request.getInputStream();
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                IO.copy(in, out, length); // KEY STEP (Don't Change!) commons-fileupload does not read to EOF
-
-                // Record what happened as servlet response headers
-                response.setIntHeader("x-request-content-length", request.getContentLength());
-                response.setIntHeader("x-request-content-read", out.size());
-                String foo = request.getParameter("foo"); // uri query parameter
-                String bar = request.getParameter("bar"); // form-data content parameter
-                response.setHeader("x-foo", foo == null ? "null" : foo);
-                response.setHeader("x-bar", bar == null ? "null" : bar);
-            }
-        };
-
-        _server.stop();
-        _server.setHandler(handler);
-        _server.start();
-
-        String multipart = "--AaBbCc\r\n" +
-            "content-disposition: form-data; name=\"bar\"\r\n" +
-            "\r\n" +
-            "BarContent\r\n" +
-            "--AaBbCc\r\n" +
-            "content-disposition: form-data; name=\"stuff\"\r\n" +
-            "Content-Type: text/plain;charset=ISO-8859-1\r\n" +
-            "\r\n" +
-            "000000000000000000000000000000000000000000000000000\r\n" +
-            "--AaBbCc--\r\n";
-
-        String request = "POST /?foo=FooUri HTTP/1.1\r\n" +
-            "Host: whatever\r\n" +
-            "Content-Type: multipart/form-data; boundary=\"AaBbCc\"\r\n" +
-            "Content-Length: " + multipart.getBytes().length + "\r\n" +
-            "Connection: close\r\n" +
-            "\r\n" +
-            multipart;
-
-        HttpTester.Response response = HttpTester.parseResponse(_connector.getResponse(request));
-
-        // It should always be possible to read query string
-        assertThat("response.x-foo", response.get("x-foo"), is("FooUri"));
-        // Not possible to read request content parameters?
-        assertThat("response.x-bar", response.get("x-bar"), is("null")); // TODO: should this work?
     }
 
     @Test
@@ -1495,69 +1672,80 @@ public class RequestTest
         assertEquals("value", cookies.get(0).getValue());
     }
 
-    @Disabled("No longer relevant")
     @Test
     public void testCookieLeak() throws Exception
     {
-        final String[] cookie = new String[10];
+        CookieRequestTester tester = new CookieRequestTester();
+        _handler._checker = tester;
 
-        _handler._checker = (request, response) ->
-        {
-            Arrays.fill(cookie, null);
-
-            Cookie[] cookies = request.getCookies();
-            for (int i = 0; cookies != null && i < cookies.length; i++)
-            {
-                cookie[i] = cookies[i].getValue();
-            }
-            return true;
-        };
-
-        String request = "POST / HTTP/1.1\r\n" +
+        String[] cookies = new String[10];
+        tester.setCookieArray(cookies);
+        LocalEndPoint endp = _connector.connect();
+        endp.addInput("POST / HTTP/1.1\r\n" +
             "Host: whatever\r\n" +
             "Cookie: other=cookie\r\n" +
-            "\r\n" +
-            "POST / HTTP/1.1\r\n" +
+            "\r\n");
+        endp.getResponse();
+        assertEquals("cookie", cookies[0]);
+        assertNull(cookies[1]);
+
+        cookies = new String[10];
+        tester.setCookieArray(cookies);
+        endp.addInput("POST / HTTP/1.1\r\n" +
             "Host: whatever\r\n" +
             "Cookie: name=value\r\n" +
             "Connection: close\r\n" +
-            "\r\n";
+            "\r\n");
+        endp.getResponse();
+        assertEquals("value", cookies[0]);
+        assertNull(cookies[1]);
 
-        _connector.getResponse(request);
-
-        assertEquals("value", cookie[0]);
-        assertNull(cookie[1]);
-
-        request = "POST / HTTP/1.1\r\n" +
+        endp = _connector.connect();
+        cookies = new String[10];
+        tester.setCookieArray(cookies);
+        endp.addInput("POST / HTTP/1.1\r\n" +
             "Host: whatever\r\n" +
             "Cookie: name=value\r\n" +
-            "\r\n" +
-            "POST / HTTP/1.1\r\n" +
+            "\r\n");
+        endp.getResponse();
+        assertEquals("value", cookies[0]);
+        assertNull(cookies[1]);
+
+        cookies = new String[10];
+        tester.setCookieArray(cookies);
+        endp.addInput("POST / HTTP/1.1\r\n" +
             "Host: whatever\r\n" +
             "Cookie: \r\n" +
             "Connection: close\r\n" +
-            "\r\n";
+            "\r\n");
+        endp.getResponse();
+        assertNull(cookies[0]);
+        assertNull(cookies[1]);
 
-        _connector.getResponse(request);
-        assertNull(cookie[0]);
-        assertNull(cookie[1]);
-
-        request = "POST / HTTP/1.1\r\n" +
+        endp = _connector.connect();
+        cookies = new String[10];
+        tester.setCookieArray(cookies);
+        endp.addInput("POST / HTTP/1.1\r\n" +
             "Host: whatever\r\n" +
             "Cookie: name=value\r\n" +
             "Cookie: other=cookie\r\n" +
-            "\r\n" +
-            "POST / HTTP/1.1\r\n" +
+            "\r\n");
+        endp.getResponse();
+        assertEquals("value", cookies[0]);
+        assertEquals("cookie", cookies[1]);
+        assertNull(cookies[2]);
+
+        cookies = new String[10];
+        tester.setCookieArray(cookies);
+        endp.addInput("POST / HTTP/1.1\r\n" +
             "Host: whatever\r\n" +
             "Cookie: name=value\r\n" +
             "Cookie:\r\n" +
             "Connection: close\r\n" +
-            "\r\n";
-
-        _connector.getResponse(request);
-
-        assertEquals("value", cookie[0]);
-        assertNull(cookie[1]);
+            "\r\n");
+        endp.getResponse();
+        assertEquals("value", cookies[0]);
+        assertNull(cookies[1]);
     }
 
     @Test
@@ -1606,14 +1794,13 @@ public class RequestTest
                 "\r\n" +
                 buf;
 
-            long start = TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
+            long start = NanoTime.now();
             String rawResponse = _connector.getResponse(request);
             HttpTester.Response response = HttpTester.parseResponse(rawResponse);
             assertThat("Response.status", response.getStatus(), is(400));
             assertThat("Response body content", response.getContent(), containsString(BadMessageException.class.getName()));
             assertThat("Response body content", response.getContent(), containsString(IllegalStateException.class.getName()));
-            long now = TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
-            assertTrue((now - start) < 5000);
+            assertTrue(NanoTime.millisSince(start) < 5000);
         }
     }
 
@@ -1645,14 +1832,13 @@ public class RequestTest
                 "\r\n" +
                 buf;
 
-            long start = TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
+            long start = NanoTime.now();
             String rawResponse = _connector.getResponse(request);
             HttpTester.Response response = HttpTester.parseResponse(rawResponse);
             assertThat("Response.status", response.getStatus(), is(400));
             assertThat("Response body content", response.getContent(), containsString(BadMessageException.class.getName()));
             assertThat("Response body content", response.getContent(), containsString(IllegalStateException.class.getName()));
-            long now = TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
-            assertTrue((now - start) < 5000);
+            assertTrue(NanoTime.millisSince(start) < 5000);
         }
     }
 
@@ -1696,6 +1882,19 @@ public class RequestTest
     }
 
     @Test
+    public void testEncoding() throws Exception
+    {
+        _handler._checker = (request, response) -> "/foo/bar".equals(request.getPathInfo());
+        String request = "GET /f%6f%6F/b%u0061r HTTP/1.0\r\n" +
+            "Host: whatever\r\n" +
+            "\r\n";
+        _connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().setUriCompliance(UriCompliance.DEFAULT);
+        assertThat(_connector.getResponse(request), startsWith("HTTP/1.1 400"));
+        _connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().setUriCompliance(UriCompliance.LEGACY);
+        assertThat(_connector.getResponse(request), startsWith("HTTP/1.1 200"));
+    }
+
+    @Test
     public void testAmbiguousParameters() throws Exception
     {
         _handler._checker = (request, response) -> true;
@@ -1733,10 +1932,75 @@ public class RequestTest
             "Host: whatever\r\n" +
             "\r\n";
         _connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().setUriCompliance(UriCompliance.DEFAULT);
+        assertThat(_connector.getResponse(request), startsWith("HTTP/1.1 200"));
+        _connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().setUriCompliance(new UriCompliance("Test", EnumSet.noneOf(UriCompliance.Violation.class)));
         assertThat(_connector.getResponse(request), startsWith("HTTP/1.1 400"));
         _connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().setUriCompliance(UriCompliance.LEGACY);
         assertThat(_connector.getResponse(request), startsWith("HTTP/1.1 200"));
         _connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().setUriCompliance(UriCompliance.RFC3986);
+        assertThat(_connector.getResponse(request), startsWith("HTTP/1.1 200"));
+    }
+
+    @Test
+    public void testAmbiguousPaths() throws Exception
+    {
+        _handler._checker = (request, response) ->
+        {
+            response.getOutputStream().println("servletPath=" + request.getServletPath());
+            response.getOutputStream().println("pathInfo=" + request.getPathInfo());
+            return true;
+        };
+        String request = "GET /unnormal/.././path/ambiguous%2f%2e%2e/%2e;/info HTTP/1.0\r\n" +
+            "Host: whatever\r\n" +
+            "\r\n";
+
+        _connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().setUriCompliance(UriCompliance.from(EnumSet.of(
+            UriCompliance.Violation.AMBIGUOUS_PATH_SEPARATOR,
+            UriCompliance.Violation.AMBIGUOUS_PATH_SEGMENT,
+            UriCompliance.Violation.AMBIGUOUS_PATH_PARAMETER)));
+        assertThat(_connector.getResponse(request), Matchers.allOf(
+            startsWith("HTTP/1.1 200"),
+            containsString("pathInfo=/path/info")));
+    }
+
+    @Test
+    public void testAmbiguousEncoding() throws Exception
+    {
+        _handler._checker = (request, response) -> true;
+        String request = "GET /ambiguous/encoded/%25/path HTTP/1.0\r\n" +
+            "Host: whatever\r\n" +
+            "\r\n";
+        _connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().setUriCompliance(UriCompliance.DEFAULT);
+        assertThat(_connector.getResponse(request), startsWith("HTTP/1.1 200"));
+        _connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().setUriCompliance(UriCompliance.LEGACY);
+        assertThat(_connector.getResponse(request), startsWith("HTTP/1.1 200"));
+        _connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().setUriCompliance(UriCompliance.RFC3986);
+        assertThat(_connector.getResponse(request), startsWith("HTTP/1.1 200"));
+        _connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().setUriCompliance(UriCompliance.UNSAFE);
+        assertThat(_connector.getResponse(request), startsWith("HTTP/1.1 200"));
+
+        UriCompliance custom = new UriCompliance("Custom", EnumSet.complementOf(
+            EnumSet.of(UriCompliance.Violation.AMBIGUOUS_PATH_ENCODING)));
+        _connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().setUriCompliance(custom);
+        assertThat(_connector.getResponse(request), startsWith("HTTP/1.1 400"));
+    }
+
+    @Test
+    public void testAmbiguousDoubleSlash() throws Exception
+    {
+        _handler._checker = (request, response) -> true;
+        String request = "GET /ambiguous/doubleSlash// HTTP/1.0\r\n" +
+            "Host: whatever\r\n" +
+            "\r\n";
+        _connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().setUriCompliance(UriCompliance.DEFAULT);
+        assertThat(_connector.getResponse(request), startsWith("HTTP/1.1 400"));
+        _connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().setUriCompliance(UriCompliance.RFC3986_UNAMBIGUOUS);
+        assertThat(_connector.getResponse(request), startsWith("HTTP/1.1 400"));
+        _connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().setUriCompliance(UriCompliance.LEGACY);
+        assertThat(_connector.getResponse(request), startsWith("HTTP/1.1 200"));
+        _connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().setUriCompliance(UriCompliance.RFC3986);
+        assertThat(_connector.getResponse(request), startsWith("HTTP/1.1 200"));
+        _connector.getBean(HttpConnectionFactory.class).getHttpConfiguration().setUriCompliance(UriCompliance.UNSAFE);
         assertThat(_connector.getResponse(request), startsWith("HTTP/1.1 200"));
     }
     
@@ -1748,6 +2012,8 @@ public class RequestTest
         request.getResponse().getHttpFields().add(new HttpCookie.SetCookieHttpField(new HttpCookie("good", "thumbsup", 100), CookieCompliance.RFC6265));
         request.getResponse().getHttpFields().add(new HttpCookie.SetCookieHttpField(new HttpCookie("bonza", "bewdy", 1), CookieCompliance.RFC6265));
         request.getResponse().getHttpFields().add(new HttpCookie.SetCookieHttpField(new HttpCookie("bad", "thumbsdown", 0), CookieCompliance.RFC6265));
+        request.getResponse().getHttpFields().add(new HttpField(HttpHeader.SET_COOKIE, new HttpCookie("ugly", "duckling", 100).getSetCookie(CookieCompliance.RFC6265)));
+        request.getResponse().getHttpFields().add(new HttpField(HttpHeader.SET_COOKIE, "flow=away; Max-Age=0; Secure; HttpOnly; SameSite=None"));
         HttpFields.Mutable fields = HttpFields.build();
         fields.add(HttpHeader.AUTHORIZATION, "Basic foo");
         request.setMetaData(new MetaData.Request("GET", HttpURI.from(uri), HttpVersion.HTTP_1_0, fields));
@@ -1772,6 +2038,8 @@ public class RequestTest
         assertThat(builder.getHeader("Cookie"), containsString("good"));
         assertThat(builder.getHeader("Cookie"), containsString("maxpos"));
         assertThat(builder.getHeader("Cookie"), not(containsString("bad")));
+        assertThat(builder.getHeader("Cookie"), containsString("ugly"));
+        assertThat(builder.getHeader("Cookie"), not(containsString("flown")));
     }
 
     @Test
@@ -1798,11 +2066,13 @@ public class RequestTest
     {
         ServletPathSpec spec;
         String uri;
+        MatchedPath matched;
         ServletPathMapping m;
 
         spec = null;
         uri = null;
-        m = new ServletPathMapping(spec, null, uri);
+        matched = null;
+        m = new ServletPathMapping(spec, null, uri, matched);
         assertThat(m.getMappingMatch(), nullValue());
         assertThat(m.getMatchValue(), is(""));
         assertThat(m.getPattern(), nullValue());
@@ -1812,71 +2082,111 @@ public class RequestTest
 
         spec = new ServletPathSpec("");
         uri = "/";
-        m = new ServletPathMapping(spec, "Something", uri);
+        matched = spec.matched(uri);
+        m = new ServletPathMapping(spec, "Something", uri, matched);
         assertThat(m.getMappingMatch(), is(MappingMatch.CONTEXT_ROOT));
         assertThat(m.getMatchValue(), is(""));
         assertThat(m.getPattern(), is(""));
         assertThat(m.getServletName(), is("Something"));
-        assertThat(m.getServletPath(), is(spec.getPathMatch(uri)));
-        assertThat(m.getPathInfo(), is(spec.getPathInfo(uri)));
+        assertThat(m.getServletPath(), is(""));
+        assertThat(m.getPathInfo(), is("/"));
 
         spec = new ServletPathSpec("/");
         uri = "/some/path";
-        m = new ServletPathMapping(spec, "Default", uri);
+        matched = spec.matched(uri);
+        m = new ServletPathMapping(spec, "Default", uri, matched);
         assertThat(m.getMappingMatch(), is(MappingMatch.DEFAULT));
         assertThat(m.getMatchValue(), is(""));
         assertThat(m.getPattern(), is("/"));
         assertThat(m.getServletName(), is("Default"));
-        assertThat(m.getServletPath(), is(spec.getPathMatch(uri)));
-        assertThat(m.getPathInfo(), is(spec.getPathInfo(uri)));
+        assertThat(m.getServletPath(), is("/some/path"));
+        assertThat(m.getPathInfo(), nullValue());
 
         spec = new ServletPathSpec("/foo/*");
         uri = "/foo/bar";
-        m = new ServletPathMapping(spec, "FooServlet", uri);
+        matched = spec.matched(uri);
+        m = new ServletPathMapping(spec, "FooServlet", uri, matched);
         assertThat(m.getMappingMatch(), is(MappingMatch.PATH));
         assertThat(m.getMatchValue(), is("foo"));
         assertThat(m.getPattern(), is("/foo/*"));
         assertThat(m.getServletName(), is("FooServlet"));
-        assertThat(m.getServletPath(), is(spec.getPathMatch(uri)));
-        assertThat(m.getPathInfo(), is(spec.getPathInfo(uri)));
+        assertThat(m.getServletPath(), is("/foo"));
+        assertThat(m.getPathInfo(), is("/bar"));
 
         uri = "/foo/";
-        m = new ServletPathMapping(spec, "FooServlet", uri);
+        matched = spec.matched(uri);
+        m = new ServletPathMapping(spec, "FooServlet", uri, matched);
         assertThat(m.getMappingMatch(), is(MappingMatch.PATH));
         assertThat(m.getMatchValue(), is("foo"));
         assertThat(m.getPattern(), is("/foo/*"));
         assertThat(m.getServletName(), is("FooServlet"));
-        assertThat(m.getServletPath(), is(spec.getPathMatch(uri)));
-        assertThat(m.getPathInfo(), is(spec.getPathInfo(uri)));
+        assertThat(m.getServletPath(), is("/foo"));
+        assertThat(m.getPathInfo(), is("/"));
 
         uri = "/foo";
-        m = new ServletPathMapping(spec, "FooServlet", uri);
+        matched = spec.matched(uri);
+        m = new ServletPathMapping(spec, "FooServlet", uri, matched);
         assertThat(m.getMappingMatch(), is(MappingMatch.PATH));
         assertThat(m.getMatchValue(), is("foo"));
         assertThat(m.getPattern(), is("/foo/*"));
         assertThat(m.getServletName(), is("FooServlet"));
-        assertThat(m.getServletPath(), is(spec.getPathMatch(uri)));
-        assertThat(m.getPathInfo(), is(spec.getPathInfo(uri)));
+        assertThat(m.getServletPath(), is("/foo"));
+        assertThat(m.getPathInfo(), nullValue());
 
         spec = new ServletPathSpec("*.jsp");
         uri = "/foo/bar.jsp";
-        m = new ServletPathMapping(spec, "JspServlet", uri);
+        matched = spec.matched(uri);
+        m = new ServletPathMapping(spec, "JspServlet", uri, matched);
         assertThat(m.getMappingMatch(), is(MappingMatch.EXTENSION));
         assertThat(m.getMatchValue(), is("foo/bar"));
         assertThat(m.getPattern(), is("*.jsp"));
         assertThat(m.getServletName(), is("JspServlet"));
-        assertThat(m.getServletPath(), is(spec.getPathMatch(uri)));
-        assertThat(m.getPathInfo(), is(spec.getPathInfo(uri)));
+        assertThat(m.getServletPath(), is("/foo/bar.jsp"));
+        assertThat(m.getPathInfo(), nullValue());
 
         spec = new ServletPathSpec("/catalog");
         uri = "/catalog";
-        m = new ServletPathMapping(spec, "CatalogServlet", uri);
+        matched = spec.matched(uri);
+        m = new ServletPathMapping(spec, "CatalogServlet", uri, matched);
         assertThat(m.getMappingMatch(), is(MappingMatch.EXACT));
         assertThat(m.getMatchValue(), is("catalog"));
         assertThat(m.getPattern(), is("/catalog"));
         assertThat(m.getServletName(), is("CatalogServlet"));
-        assertThat(m.getServletPath(), is(spec.getPathMatch(uri)));
-        assertThat(m.getPathInfo(), is(spec.getPathInfo(uri)));
+        assertThat(m.getServletPath(), is("/catalog"));
+        assertThat(m.getPathInfo(), nullValue());
+    }
+
+    @Test
+    public void testRegexPathMapping()
+    {
+        RegexPathSpec spec;
+        ServletPathMapping m;
+
+        spec = new RegexPathSpec("^/.*$");
+        m = new ServletPathMapping(spec, "Something", "/some/path", spec.matched("/some/path"));
+        assertThat(m.getMappingMatch(), nullValue());
+        assertThat(m.getPattern(), is(spec.getDeclaration()));
+        assertThat(m.getServletName(), is("Something"));
+        assertThat(m.getServletPath(), is("/some/path"));
+        assertThat(m.getPathInfo(), nullValue());
+        assertThat(m.getMatchValue(), is("some/path"));
+
+        spec = new RegexPathSpec("^/some(/.*)?$");
+        m = new ServletPathMapping(spec, "Something", "/some/path", spec.matched("/some/path"));
+        assertThat(m.getMappingMatch(), nullValue());
+        assertThat(m.getPattern(), is(spec.getDeclaration()));
+        assertThat(m.getServletName(), is("Something"));
+        assertThat(m.getServletPath(), is("/some"));
+        assertThat(m.getPathInfo(), is("/path"));
+        assertThat(m.getMatchValue(), is("some"));
+
+        m = new ServletPathMapping(spec, "Something", "/some", spec.matched("/some"));
+        assertThat(m.getMappingMatch(), nullValue());
+        assertThat(m.getPattern(), is(spec.getDeclaration()));
+        assertThat(m.getServletName(), is("Something"));
+        assertThat(m.getServletPath(), is("/some"));
+        assertThat(m.getPathInfo(), nullValue());
+        assertThat(m.getMatchValue(), is("some"));
     }
 
     private static long getFileCount(Path path)
@@ -1896,6 +2206,29 @@ public class RequestTest
         boolean check(HttpServletRequest request, HttpServletResponse response) throws IOException;
     }
 
+    private static class CookieRequestTester implements RequestTester
+    {
+        private String[] _cookieValues;
+
+        public void setCookieArray(String[] cookieValues)
+        {
+            _cookieValues = cookieValues;
+        }
+
+        @Override
+        public boolean check(HttpServletRequest request, HttpServletResponse response) throws IOException
+        {
+            Arrays.fill(_cookieValues, null);
+
+            Cookie[] cookies = request.getCookies();
+            for (int i = 0; cookies != null && i < cookies.length; i++)
+            {
+                _cookieValues[i] = cookies[i].getValue();
+            }
+            return true;
+        }
+    }
+    
     private static class TestRequest extends Request
     {
         public static final String TEST_SESSION_ID = "abc123";
@@ -1921,7 +2254,9 @@ public class RequestTest
         @Override
         public HttpSession getSession()
         {
-            return new Session(new SessionHandler(), new SessionData(TEST_SESSION_ID,  "", "0.0.0.0", 0, 0, 0, 300));
+            Session session = new Session(new SessionHandler(), new SessionData(TEST_SESSION_ID,  "", "0.0.0.0", 0, 0, 0, 300));
+            session.setResident(true); //necessary for session methods to not throw ISE
+            return session;
         }
 
         @Override

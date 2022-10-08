@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -14,9 +14,9 @@
 package org.eclipse.jetty.servlet;
 
 import java.io.IOException;
-import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.StringTokenizer;
 import javax.servlet.ServletContext;
 import javax.servlet.ServletException;
@@ -171,7 +171,7 @@ public class DefaultServlet extends HttpServlet implements ResourceFactory, Welc
         _resourceService.setAcceptRanges(getInitBoolean("acceptRanges", _resourceService.isAcceptRanges()));
         _resourceService.setDirAllowed(getInitBoolean("dirAllowed", _resourceService.isDirAllowed()));
         _resourceService.setRedirectWelcome(getInitBoolean("redirectWelcome", _resourceService.isRedirectWelcome()));
-        _resourceService.setPrecompressedFormats(parsePrecompressedFormats(getInitParameter("precompressed"), getInitBoolean("gzip", false)));
+        _resourceService.setPrecompressedFormats(parsePrecompressedFormats(getInitParameter("precompressed"), getInitBoolean("gzip"), _resourceService.getPrecompressedFormats()));
         _resourceService.setPathInfoOnly(getInitBoolean("pathInfoOnly", _resourceService.isPathInfoOnly()));
         _resourceService.setEtags(getInitBoolean("etags", _resourceService.isEtags()));
 
@@ -304,8 +304,12 @@ public class DefaultServlet extends HttpServlet implements ResourceFactory, Welc
             LOG.debug("resource base = {}", _resourceBase);
     }
 
-    private CompressedContentFormat[] parsePrecompressedFormats(String precompressed, boolean gzip)
+    private CompressedContentFormat[] parsePrecompressedFormats(String precompressed, Boolean gzip, CompressedContentFormat[] dft)
     {
+        if (precompressed == null && gzip == null)
+        {
+            return dft;
+        }
         List<CompressedContentFormat> ret = new ArrayList<>();
         if (precompressed != null && precompressed.indexOf('=') > 0)
         {
@@ -315,7 +319,7 @@ public class DefaultServlet extends HttpServlet implements ResourceFactory, Welc
                 String encoding = setting[0].trim();
                 String extension = setting[1].trim();
                 ret.add(new CompressedContentFormat(encoding, extension));
-                if (gzip && !ret.contains(CompressedContentFormat.GZIP))
+                if (gzip == Boolean.TRUE && !ret.contains(CompressedContentFormat.GZIP))
                     ret.add(CompressedContentFormat.GZIP);
             }
         }
@@ -327,7 +331,7 @@ public class DefaultServlet extends HttpServlet implements ResourceFactory, Welc
                 ret.add(CompressedContentFormat.GZIP);
             }
         }
-        else if (gzip)
+        else if (gzip == Boolean.TRUE)
         {
             // gzip handling is for backwards compatibility with older Jetty
             ret.add(CompressedContentFormat.GZIP);
@@ -368,16 +372,21 @@ public class DefaultServlet extends HttpServlet implements ResourceFactory, Welc
         return value;
     }
 
-    private boolean getInitBoolean(String name, boolean dft)
+    private Boolean getInitBoolean(String name)
     {
         String value = getInitParameter(name);
         if (value == null || value.length() == 0)
-            return dft;
+            return null;
         return (value.startsWith("t") ||
             value.startsWith("T") ||
             value.startsWith("y") ||
             value.startsWith("Y") ||
             value.startsWith("1"));
+    }
+
+    private boolean getInitBoolean(String name, boolean dft)
+    {
+        return Optional.ofNullable(getInitBoolean(name)).orElse(dft);
     }
 
     private int getInitInt(String name, int dft)
@@ -420,8 +429,7 @@ public class DefaultServlet extends HttpServlet implements ResourceFactory, Welc
             }
             else
             {
-                URL u = _servletContext.getResource(pathInContext);
-                r = _contextHandler.newResource(u);
+                return null;
             }
 
             if (LOG.isDebugEnabled())

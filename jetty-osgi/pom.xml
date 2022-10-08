@@ -2,7 +2,7 @@
   <parent>
     <groupId>org.eclipse.jetty</groupId>
     <artifactId>jetty-project</artifactId>
-    <version>10.0.2-SNAPSHOT</version>
+    <version>10.0.13-SNAPSHOT</version>
   </parent>
 
   <modelVersion>4.0.0</modelVersion>
@@ -12,10 +12,9 @@
   <packaging>pom</packaging>
 
   <properties>
-    <osgi-version>3.16.100</osgi-version>
-    <osgi-services-version>3.9.0</osgi-services-version>
-    <osgi-util-version>3.5.300</osgi-util-version>
+
     <equinox-http-servlet-version>1.0.0-v20070606</equinox-http-servlet-version>
+    <jacoco.skip>true</jacoco.skip>
   </properties>
 
   <modules>
@@ -59,76 +58,10 @@
         </excludes>
       </resource>
     </resources>
-    <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-eclipse-plugin</artifactId>
-        <configuration>
-          <manifest>prevent/overwriting/by/pointing/to/nonexisting/MANIFEST.MF</manifest>
-          <pde>true</pde>
-          <downloadSources>true</downloadSources>
-          <sourceExcludes>
-            <sourceExclude>**/.svn/**</sourceExclude>
-          </sourceExcludes>
-        </configuration>
-      </plugin>
-      <plugin>
-        <groupId>org.jacoco</groupId>
-        <artifactId>jacoco-maven-plugin</artifactId>
-        <configuration>
-          <skip>true</skip>
-        </configuration>
-      </plugin>
-    </plugins>
   </build>
 
   <dependencyManagement>
     <dependencies>
-      <dependency>
-        <groupId>org.eclipse.jetty</groupId>
-        <artifactId>jetty-annotations</artifactId>
-        <version>${project.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.eclipse.jetty</groupId>
-        <artifactId>jetty-websocket</artifactId>
-        <version>${project.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.eclipse.jetty</groupId>
-        <artifactId>jetty-util</artifactId>
-        <version>${project.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.eclipse.jetty</groupId>
-        <artifactId>jetty-jmx</artifactId>
-        <version>${project.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.eclipse.jetty</groupId>
-        <artifactId>jetty-webapp</artifactId>
-        <version>${project.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.eclipse.jetty</groupId>
-        <artifactId>jetty-deploy</artifactId>
-        <version>${project.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.eclipse.jetty</groupId>
-        <artifactId>jetty-nested</artifactId>
-        <version>${project.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.eclipse.jetty</groupId>
-        <artifactId>jetty-servlet</artifactId>
-        <version>${project.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.eclipse.jetty</groupId>
-        <artifactId>jetty-servlets</artifactId>
-        <version>${project.version}</version>
-      </dependency>
       <dependency>
         <groupId>org.eclipse.platform</groupId>
         <artifactId>org.eclipse.osgi.services</artifactId>
@@ -152,34 +85,29 @@
         <version>${osgi-version}</version>
       </dependency>
       <dependency>
+        <groupId>org.osgi</groupId>
+        <artifactId>org.osgi.service.cm</artifactId>
+        <version>${osgi-service-cm-version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.osgi</groupId>
+        <artifactId>org.osgi.service.component</artifactId>
+        <version>${osgi-service-component-version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.osgi</groupId>
+        <artifactId>org.osgi.service.event</artifactId>
+        <version>${osgi-service-event-version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.osgi</groupId>
+        <artifactId>org.osgi.util.tracker</artifactId>
+        <version>${osgi-util-tracker-version}</version>
+      </dependency>
+      <dependency>
         <groupId>org.eclipse.equinox.http</groupId>
         <artifactId>servlet</artifactId>
         <version>${equinox-http-servlet-version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.slf4j</groupId>
-        <artifactId>slf4j-api</artifactId>
-        <version>${slf4j.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.slf4j</groupId>
-        <artifactId>jcl-over-slf4j</artifactId>
-        <version>${slf4j.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.slf4j</groupId>
-        <artifactId>log4j-over-slf4j</artifactId>
-        <version>${slf4j.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>ch.qos.logback</groupId>
-        <artifactId>logback-core</artifactId>
-        <version>${logback.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>ch.qos.logback</groupId>
-        <artifactId>logback-classic</artifactId>
-        <version>${logback.version}</version>
       </dependency>
     </dependencies>
   </dependencyManagement>

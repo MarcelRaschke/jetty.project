@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -25,6 +25,7 @@ public class HttpStatus
     public static final int CONTINUE_100 = 100;
     public static final int SWITCHING_PROTOCOLS_101 = 101;
     public static final int PROCESSING_102 = 102;
+    public static final int EARLY_HINT_103 = 103;
 
     public static final int OK_200 = 200;
     public static final int CREATED_201 = 201;
@@ -103,6 +104,7 @@ public class HttpStatus
         CONTINUE(CONTINUE_100, "Continue"),
         SWITCHING_PROTOCOLS(SWITCHING_PROTOCOLS_101, "Switching Protocols"),
         PROCESSING(PROCESSING_102, "Processing"),
+        EARLY_HINT(EARLY_HINT_103, "Early Hint"),
 
         OK(OK_200, "OK"),
         CREATED(CREATED_201, "Created"),
@@ -314,8 +316,9 @@ public class HttpStatus
         switch (status)
         {
             case NO_CONTENT_204:
-            case NOT_MODIFIED_304:
+            case RESET_CONTENT_205:
             case PARTIAL_CONTENT_206:
+            case NOT_MODIFIED_304:
                 return true;
 
             default:
@@ -336,6 +339,17 @@ public class HttpStatus
     public static boolean isInformational(int code)
     {
         return ((100 <= code) && (code <= 199));
+    }
+
+    /**
+     * Tests whether the status code is informational but not {@code 101 Switching Protocols}.
+     *
+     * @param code the code to test
+     * @return whether the status code is informational but not {@code 101 Switching Protocols}
+     */
+    public static boolean isInterim(int code)
+    {
+        return isInformational(code) && code != HttpStatus.SWITCHING_PROTOCOLS_101;
     }
 
     /**

@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -27,7 +27,9 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import org.eclipse.jetty.util.AtomicBiInteger;
 import org.eclipse.jetty.util.BlockingArrayQueue;
+import org.eclipse.jetty.util.NanoTime;
 import org.eclipse.jetty.util.StringUtil;
+import org.eclipse.jetty.util.VirtualThreads;
 import org.eclipse.jetty.util.annotation.ManagedAttribute;
 import org.eclipse.jetty.util.annotation.ManagedObject;
 import org.eclipse.jetty.util.annotation.ManagedOperation;
@@ -74,7 +76,7 @@ import org.slf4j.LoggerFactory;
  * </ul>
  */
 @ManagedObject("A thread pool")
-public class QueuedThreadPool extends ContainerLifeCycle implements ThreadFactory, SizedThreadPool, Dumpable, TryExecutor
+public class QueuedThreadPool extends ContainerLifeCycle implements ThreadFactory, SizedThreadPool, Dumpable, TryExecutor, VirtualThreads.Configurable
 {
     private static final Logger LOG = LoggerFactory.getLogger(QueuedThreadPool.class);
     private static final Runnable NOOP = () ->
@@ -109,6 +111,7 @@ public class QueuedThreadPool extends ContainerLifeCycle implements ThreadFactor
     private int _lowThreadsThreshold = 1;
     private ThreadPoolBudget _budget;
     private long _stopTimeout;
+    private boolean _useVirtualThreads;
 
     public QueuedThreadPool()
     {
@@ -214,7 +217,7 @@ public class QueuedThreadPool extends ContainerLifeCycle implements ThreadFactor
         }
         addBean(_tryExecutor);
 
-        _lastShrink.set(System.nanoTime());
+        _lastShrink.set(NanoTime.now());
 
         super.doStart();
         // The threads count set to MIN_VALUE is used to signal to Runners that the pool is stopped.
@@ -243,45 +246,43 @@ public class QueuedThreadPool extends ContainerLifeCycle implements ThreadFactor
         {
             // Fill the job queue with noop jobs to wakeup idle threads.
             for (int i = 0; i < threads; ++i)
-            {
-                jobs.offer(NOOP);
-            }
+                if (!jobs.offer(NOOP))
+                    break;
 
             // try to let jobs complete naturally for half our stop time
-            joinThreads(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeout) / 2);
+            joinThreads(NanoTime.now() + TimeUnit.MILLISECONDS.toNanos(timeout) / 2);
 
             // If we still have threads running, get a bit more aggressive
 
             // interrupt remaining threads
             for (Thread thread : _threads)
             {
+                if (thread == Thread.currentThread())
+                    continue;
                 if (LOG.isDebugEnabled())
                     LOG.debug("Interrupting {}", thread);
                 thread.interrupt();
             }
 
             // wait again for the other half of our stop time
-            joinThreads(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeout) / 2);
+            joinThreads(NanoTime.now() + TimeUnit.MILLISECONDS.toNanos(timeout) / 2);
 
             Thread.yield();
-            if (LOG.isDebugEnabled())
+
+            for (Thread unstopped : _threads)
             {
-                for (Thread unstopped : _threads)
+                if (unstopped == Thread.currentThread())
+                    continue;
+                String stack = "";
+                if (LOG.isDebugEnabled())
                 {
                     StringBuilder dmp = new StringBuilder();
                     for (StackTraceElement element : unstopped.getStackTrace())
-                    {
                         dmp.append(System.lineSeparator()).append("\tat ").append(element);
-                    }
-                    LOG.warn("Couldn't stop {}{}", unstopped, dmp.toString());
+                    stack = dmp.toString();
                 }
-            }
-            else
-            {
-                for (Thread unstopped : _threads)
-                {
-                    LOG.warn("{} Couldn't stop {}", this, unstopped);
-                }
+
+                LOG.warn("Couldn't stop {}{}", unstopped, stack);
             }
         }
 
@@ -315,13 +316,32 @@ public class QueuedThreadPool extends ContainerLifeCycle implements ThreadFactor
 
     private void joinThreads(long stopByNanos) throws InterruptedException
     {
-        for (Thread thread : _threads)
+        loop : while (true)
         {
-            long canWait = TimeUnit.NANOSECONDS.toMillis(stopByNanos - System.nanoTime());
-            if (LOG.isDebugEnabled())
-                LOG.debug("Waiting for {} for {}", thread, canWait);
-            if (canWait > 0)
-                thread.join(canWait);
+            for (Thread thread : _threads)
+            {
+                // Don't join ourselves
+                if (thread == Thread.currentThread())
+                    continue;
+
+                long canWait = NanoTime.millisUntil(stopByNanos);
+                if (LOG.isDebugEnabled())
+                    LOG.debug("Waiting for {} for {}", thread, canWait);
+                if (canWait <= 0)
+                    return;
+
+                try
+                {
+                    thread.join(canWait);
+                }
+                catch (InterruptedException e)
+                {
+                    // Don't stop waiting for a join if interrupted
+                    continue loop;
+                }
+            }
+
+            return;
         }
     }
 
@@ -492,6 +512,25 @@ public class QueuedThreadPool extends ContainerLifeCycle implements ThreadFactor
     public void setLowThreadsThreshold(int lowThreadsThreshold)
     {
         _lowThreadsThreshold = lowThreadsThreshold;
+    }
+
+    @Override
+    public boolean isUseVirtualThreads()
+    {
+        return _useVirtualThreads;
+    }
+
+    @Override
+    public void setUseVirtualThreads(boolean useVirtualThreads)
+    {
+        try
+        {
+            VirtualThreads.Configurable.super.setUseVirtualThreads(useVirtualThreads);
+            _useVirtualThreads = useVirtualThreads;
+        }
+        catch (UnsupportedOperationException ignored)
+        {
+        }
     }
 
     /**
@@ -788,7 +827,7 @@ public class QueuedThreadPool extends ContainerLifeCycle implements ThreadFactor
             if (LOG.isDebugEnabled())
                 LOG.debug("Starting {}", thread);
             _threads.add(thread);
-            _lastShrink.set(System.nanoTime());
+            _lastShrink.set(NanoTime.now());
             thread.start();
             started = true;
         }
@@ -1012,8 +1051,8 @@ public class QueuedThreadPool extends ContainerLifeCycle implements ThreadFactor
                             if (idleTimeout > 0 && getThreads() > _minThreads)
                             {
                                 long last = _lastShrink.get();
-                                long now = System.nanoTime();
-                                if ((now - last) > TimeUnit.MILLISECONDS.toNanos(idleTimeout) && _lastShrink.compareAndSet(last, now))
+                                long now = NanoTime.now();
+                                if (NanoTime.millisElapsed(last, now) > idleTimeout && _lastShrink.compareAndSet(last, now))
                                 {
                                     if (LOG.isDebugEnabled())
                                         LOG.debug("shrinking {}", QueuedThreadPool.this);

@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -45,8 +45,8 @@ import org.apache.maven.plugin.descriptor.PluginDescriptor;
 import org.apache.maven.plugins.annotations.Component;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
-import org.apache.maven.shared.transfer.artifact.resolve.ArtifactResolver;
 import org.codehaus.plexus.util.StringUtils;
+import org.eclipse.aether.RepositorySystem;
 import org.eclipse.jetty.maven.plugin.utils.MavenProjectHelper;
 import org.eclipse.jetty.security.LoginService;
 import org.eclipse.jetty.server.RequestLog;
@@ -290,7 +290,6 @@ public abstract class AbstractWebAppMojo extends AbstractMojo
     @Parameter
     protected int stopPort;
     
-    
     /**
      * Key to provide when stopping jetty on executing java -DSTOP.KEY=&lt;stopKey&gt; 
      * -DSTOP.PORT=&lt;stopPort&gt; -jar start.jar --stop
@@ -319,6 +318,13 @@ public abstract class AbstractWebAppMojo extends AbstractMojo
      */
     @Parameter
     protected String[] modules;
+
+    /**
+     * Extra options that can be passed to the jetty command line
+     */
+    @Parameter (property = "jetty.options")
+    protected String jettyOptions;
+
     //End of EXTERNAL only parameters
 
     //Start of parameters only valid for FORK
@@ -351,7 +357,7 @@ public abstract class AbstractWebAppMojo extends AbstractMojo
      * 
      */
     @Component
-    private ArtifactResolver artifactResolver;
+    private RepositorySystem repositorySystem;
     
     /**
      * The current maven session
@@ -404,7 +410,7 @@ public abstract class AbstractWebAppMojo extends AbstractMojo
             }
             
             getLog().info("Configuring Jetty for project: " + getProjectName());
-            mavenProjectHelper = new MavenProjectHelper(project, artifactResolver, remoteRepositories, session);
+            mavenProjectHelper = new MavenProjectHelper(project, repositorySystem, remoteRepositories, session);
             mergedSystemProperties = mergeSystemProperties();
             configureSystemProperties();
             augmentPluginClasspath();
@@ -511,6 +517,7 @@ public abstract class AbstractWebAppMojo extends AbstractMojo
         jetty.setStopPort(stopPort);
         jetty.setEnv(env);
         jetty.setJvmArgs(jvmArgs);
+        jetty.setJettyOptions(jettyOptions);
         jetty.setJettyXmlFiles(jettyXmls);
         jetty.setJettyProperties(jettyProperties);
         jetty.setModules(modules);

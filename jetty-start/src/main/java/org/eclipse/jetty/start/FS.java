@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -198,7 +198,14 @@ public class FS
                     continue;
                 }
 
-                Path destFile = destination.resolve(entry.getName());
+                String entryName = entry.getName();
+                Path destFile = destination.resolve(entryName).normalize().toAbsolutePath();
+                // make sure extracted path does not escape the destination directory
+                if (!destFile.startsWith(destination))
+                {
+                    throw new IOException(String.format("Malicious Archive %s found with bad entry \"%s\"",
+                        archive, entryName));
+                }
                 if (!Files.exists(destFile))
                 {
                     FS.ensureDirectoryExists(destFile.getParent());

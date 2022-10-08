@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -643,12 +643,23 @@ public class ContextHandlerTest
     public void testProtected() throws Exception
     {
         ContextHandler handler = new ContextHandler();
-        String[] protectedTargets = {"/foo-inf", "/bar-inf"};
+        String[] protectedTargets = {"/FOO-INF", "/BAR-INF"};
         handler.setProtectedTargets(protectedTargets);
 
+        assertTrue(handler.isProtectedTarget("/foo-inf"));
+        assertTrue(handler.isProtectedTarget("/Foo-Inf"));
+        assertTrue(handler.isProtectedTarget("/FOO-INF"));
+        assertTrue(handler.isProtectedTarget("/foo-inf/"));
+        assertTrue(handler.isProtectedTarget("/FOO-inf?"));
+        assertTrue(handler.isProtectedTarget("/FOO-INF;"));
+        assertTrue(handler.isProtectedTarget("/foo-INF#"));
+        assertTrue(handler.isProtectedTarget("//foo-inf"));
+        assertTrue(handler.isProtectedTarget("//foo-inf//some//path"));
+        assertTrue(handler.isProtectedTarget("///foo-inf"));
         assertTrue(handler.isProtectedTarget("/foo-inf/x/y/z"));
-        assertFalse(handler.isProtectedTarget("/foo/x/y/z"));
         assertTrue(handler.isProtectedTarget("/foo-inf?x=y&z=1"));
+
+        assertFalse(handler.isProtectedTarget("/foo/x/y/z"));
         assertFalse(handler.isProtectedTarget("/foo-inf-bar"));
 
         protectedTargets = new String[4];

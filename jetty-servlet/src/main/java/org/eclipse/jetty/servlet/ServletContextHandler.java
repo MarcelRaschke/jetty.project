@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -175,7 +175,6 @@ public class ServletContextHandler extends ContextHandler
         _servletHandler = servletHandler;
 
         _objFactory = new DecoratedObjectFactory();
-        _objFactory.addDecorator(new DeprecationWarning());
 
         // Link the handlers
         relinkHandlers();
@@ -302,6 +301,7 @@ public class ServletContextHandler extends ContextHandler
     @Override
     protected void doStart() throws Exception
     {
+        _objFactory.addDecorator(new DeprecationWarning());
         getServletContext().setAttribute(DecoratedObjectFactory.ATTR, _objFactory);
         super.doStart();
     }

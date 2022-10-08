@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -24,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.eclipse.jetty.logging.StacklessLogging;
+import org.eclipse.jetty.util.NanoTime;
 import org.eclipse.jetty.util.component.LifeCycle;
 import org.eclipse.jetty.util.thread.ThreadPool.SizedThreadPool;
 import org.hamcrest.Matchers;
@@ -98,6 +99,43 @@ public class QueuedThreadPoolTest extends AbstractThreadPoolTest
             }
 
             super.removeThread(thread);
+        }
+    }
+
+    private static class StoppingTask implements Runnable
+    {
+        private final CountDownLatch _running;
+        private final CountDownLatch _blocked;
+        private final QueuedThreadPool _tp;
+        Thread _thread;
+        CountDownLatch _completed = new CountDownLatch(1);
+
+        public StoppingTask(CountDownLatch running, CountDownLatch blocked, QueuedThreadPool tp)
+        {
+            _running = running;
+            _blocked = blocked;
+            _tp = tp;
+        }
+
+        @Override
+        public void run()
+        {
+            try
+            {
+                _thread = Thread.currentThread();
+                _running.countDown();
+                _blocked.await();
+                _tp.doStop();
+                _completed.countDown();
+            }
+            catch (InterruptedException x)
+            {
+                x.printStackTrace();
+            }
+            catch (Exception e)
+            {
+                throw new RuntimeException(e);
+            }
         }
     }
 
@@ -640,19 +678,18 @@ public class QueuedThreadPoolTest extends AbstractThreadPoolTest
             }
         });
 
-        long beforeStop = TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
+        long beforeStop = NanoTime.now();
         tp.stop();
-        long afterStop = TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
+        long afterStop = NanoTime.now();
         assertTrue(tp.isStopped());
-        assertTrue(afterStop - beforeStop < 1000);
+        assertTrue(NanoTime.millisElapsed(beforeStop, afterStop) < 1000);
         assertTrue(interruptedLatch.await(5, TimeUnit.SECONDS));
     }
 
     private void waitForIdle(QueuedThreadPool tp, int idle)
     {
-        long now = TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
-        long start = now;
-        while (tp.getIdleThreads() != idle && (now - start) < 10000)
+        long start = NanoTime.now();
+        while (tp.getIdleThreads() != idle && NanoTime.millisSince(start) < 10000)
         {
             try
             {
@@ -661,17 +698,15 @@ public class QueuedThreadPoolTest extends AbstractThreadPoolTest
             catch (InterruptedException ignored)
             {
             }
-            now = TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
         }
         assertThat(tp.getIdleThreads(), is(idle));
     }
 
     private void waitForReserved(QueuedThreadPool tp, int reserved)
     {
-        long now = TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
-        long start = now;
+        long start = NanoTime.now();
         ReservedThreadExecutor reservedThreadExecutor = tp.getBean(ReservedThreadExecutor.class);
-        while (reservedThreadExecutor.getAvailable() != reserved && (now - start) < 10000)
+        while (reservedThreadExecutor.getAvailable() != reserved && NanoTime.millisSince(start) < 10000)
         {
             try
             {
@@ -680,16 +715,14 @@ public class QueuedThreadPoolTest extends AbstractThreadPoolTest
             catch (InterruptedException ignored)
             {
             }
-            now = TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
         }
         assertThat(reservedThreadExecutor.getAvailable(), is(reserved));
     }
 
     private void waitForThreads(QueuedThreadPool tp, int threads)
     {
-        long now = TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
-        long start = now;
-        while (tp.getThreads() != threads && (now - start) < 10000)
+        long start = NanoTime.now();
+        while (tp.getThreads() != threads && NanoTime.millisSince(start) < 10000)
         {
             try
             {
@@ -698,7 +731,6 @@ public class QueuedThreadPoolTest extends AbstractThreadPoolTest
             catch (InterruptedException ignored)
             {
             }
-            now = TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
         }
         assertThat(tp.getThreads(), is(threads));
     }
@@ -831,7 +863,7 @@ public class QueuedThreadPoolTest extends AbstractThreadPoolTest
         dump = pool.dump();
         assertThat(count(dump, " - STARTED"), is(2));
         assertThat(dump, containsString(",3<=3<=4,i=2,r=2,q=0"));
-        assertThat(dump, containsString("s=0/2"));
+        assertThat(dump, containsString("reserved=0/2"));
         assertThat(dump, containsString("[ReservedThreadExecutor@"));
         assertThat(count(dump, " IDLE"), is(2));
         assertThat(count(dump, " WAITING"), is(1));
@@ -846,7 +878,7 @@ public class QueuedThreadPoolTest extends AbstractThreadPoolTest
         dump = pool.dump();
         assertThat(count(dump, " - STARTED"), is(2));
         assertThat(dump, containsString(",3<=3<=4,i=1,r=2,q=0"));
-        assertThat(dump, containsString("s=1/2"));
+        assertThat(dump, containsString("reserved=1/2"));
         assertThat(dump, containsString("[ReservedThreadExecutor@"));
         assertThat(count(dump, " IDLE"), is(1));
         assertThat(count(dump, " WAITING"), is(1));
@@ -945,6 +977,49 @@ public class QueuedThreadPoolTest extends AbstractThreadPoolTest
             leasedJobs.forEach(job -> job._stopping.countDown());
             tp.stop();
         }
+    }
+
+    @Test
+    public void testInterruptedStop() throws Exception
+    {
+        QueuedThreadPool tp = new QueuedThreadPool();
+        tp.setStopTimeout(1000);
+        tp.start();
+
+        CountDownLatch running = new CountDownLatch(3);
+        CountDownLatch blocked = new CountDownLatch(1);
+        CountDownLatch forever = new CountDownLatch(2);
+        CountDownLatch interrupted = new CountDownLatch(1);
+
+        Runnable runForever = () ->
+        {
+            try
+            {
+                running.countDown();
+                forever.await();
+            }
+            catch (InterruptedException x)
+            {
+                interrupted.countDown();
+            }
+            catch (Exception e)
+            {
+                throw new RuntimeException(e);
+            }
+        };
+
+        StoppingTask stopping = new StoppingTask(running, blocked, tp);
+
+        tp.execute(runForever);
+        tp.execute(stopping);
+        tp.execute(runForever);
+
+        assertTrue(running.await(5, TimeUnit.SECONDS));
+        blocked.countDown();
+        Thread.sleep(100); // wait until in doStop, then....
+        stopping._thread.interrupt(); // spurious interrupt
+        assertTrue(interrupted.await(5, TimeUnit.SECONDS));
+        assertTrue(stopping._completed.await(5, TimeUnit.SECONDS));
     }
 
     private int count(String s, String p)

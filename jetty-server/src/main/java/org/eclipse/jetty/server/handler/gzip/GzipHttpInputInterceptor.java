@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -32,12 +32,20 @@ public class GzipHttpInputInterceptor implements HttpInput.Interceptor, Destroya
 
     public GzipHttpInputInterceptor(InflaterPool inflaterPool, ByteBufferPool pool, int bufferSize)
     {
-        _decoder = new Decoder(inflaterPool, pool, bufferSize);
+        this(inflaterPool, pool, bufferSize, false);
+    }
+
+    public GzipHttpInputInterceptor(InflaterPool inflaterPool, ByteBufferPool pool, int bufferSize, boolean useDirectBuffers)
+    {
+        _decoder = new Decoder(inflaterPool, pool, bufferSize, useDirectBuffers);
     }
 
     @Override
     public Content readFrom(Content content)
     {
+        if (content.isSpecial())
+            return content;
+
         _decoder.decodeChunks(content.getByteBuffer());
         final ByteBuffer chunk = _chunk;
 
@@ -68,9 +76,9 @@ public class GzipHttpInputInterceptor implements HttpInput.Interceptor, Destroya
 
     private class Decoder extends GZIPContentDecoder
     {
-        private Decoder(InflaterPool inflaterPool, ByteBufferPool bufferPool, int bufferSize)
+        private Decoder(InflaterPool inflaterPool, ByteBufferPool bufferPool, int bufferSize, boolean useDirectBuffers)
         {
-            super(inflaterPool, bufferPool, bufferSize);
+            super(inflaterPool, bufferPool, bufferSize, useDirectBuffers);
         }
 
         @Override

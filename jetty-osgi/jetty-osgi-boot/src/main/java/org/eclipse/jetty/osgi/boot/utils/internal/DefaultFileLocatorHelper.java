@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -355,10 +355,10 @@ public class DefaultFileLocatorHelper implements BundleFileLocatorHelper
      * Get a URL to the content of the bundle entry that uses the file:
      * protocol. The content of the bundle entry may be downloaded or extracted
      * to the local file system in order to create a file: URL.
+     * </p>
      *
      * @return a URL to the content of the bundle entry that uses the file:
      * protocol
-     * </p>
      * @throws Exception if unable to get the file url
      */
     @Override

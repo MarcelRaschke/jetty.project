@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -13,13 +13,17 @@
 
 package org.eclipse.jetty.start;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
+import java.util.stream.Collectors;
 
-import org.eclipse.jetty.toolchain.test.IO;
 import org.eclipse.jetty.toolchain.test.MavenTestingUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
@@ -29,7 +33,6 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
-import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class MainTest
@@ -39,42 +42,6 @@ public class MainTest
     {
         System.setProperty("jetty.home", "");
         System.setProperty("jetty.base", "");
-    }
-
-    @Test
-    public void testBasicProcessing() throws Exception
-    {
-        List<String> cmdLineArgs = new ArrayList<>();
-        Path testJettyHome = MavenTestingUtils.getTestResourceDir("dist-home").toPath().toRealPath();
-        cmdLineArgs.add("user.dir=" + testJettyHome);
-        cmdLineArgs.add("jetty.home=" + testJettyHome);
-        // cmdLineArgs.add("jetty.http.port=9090");
-
-        Main main = new Main();
-        StartArgs args = main.processCommandLine(cmdLineArgs.toArray(new String[0]));
-        BaseHome baseHome = main.getBaseHome();
-        // System.err.println(args);
-
-        ConfigurationAssert.assertConfiguration(baseHome, args, "assert-home.txt");
-
-        // System.err.println("StartArgs.props:");
-        // args.getProperties().forEach(p->System.err.println(p));
-        // System.err.println("BaseHome.props:");
-        // baseHome.getConfigSources().getProps().forEach(p->System.err.println(p));
-
-        Props props = args.getProperties();
-
-        assertThat("Props(jetty.home)", props.getString("jetty.home"), is(baseHome.getHome()));
-        assertThat("Props(jetty.home)", props.getString("jetty.home"), is(not(startsWith("file:"))));
-        assertThat("Props(jetty.home.uri)", props.getString("jetty.home.uri") + "/", is(baseHome.getHomePath().toUri().toString()));
-        assertThat("Props(jetty.base)", props.getString("jetty.base"), is(baseHome.getBase()));
-        assertThat("Props(jetty.base)", props.getString("jetty.base"), is(not(startsWith("file:"))));
-        assertThat("Props(jetty.base.uri)", props.getString("jetty.base.uri") + "/", is(baseHome.getBasePath().toUri().toString()));
-
-        assertThat("System.getProperty(jetty.home)", System.getProperty("jetty.home"), is(baseHome.getHome()));
-        assertThat("System.getProperty(jetty.home)", System.getProperty("jetty.home"), is(not(startsWith("file:"))));
-        assertThat("System.getProperty(jetty.base)", System.getProperty("jetty.base"), is(baseHome.getBase()));
-        assertThat("System.getProperty(jetty.base)", System.getProperty("jetty.base"), is(not(startsWith("file:"))));
     }
 
     @Test
@@ -88,7 +55,6 @@ public class MainTest
 
         Main main = new Main();
         StartArgs args = main.processCommandLine(cmdLineArgs.toArray(new String[0]));
-        // System.err.println(args);
 
         // assertEquals(0, args.getEnabledModules().size(), "--stop should not build module tree");
         assertEquals("10000", args.getProperties().getString("STOP.PORT"), "--stop missing port");
@@ -97,19 +63,83 @@ public class MainTest
     }
 
     @Test
-    @Disabled("Too noisy for general testing")
     public void testListConfig() throws Exception
     {
         List<String> cmdLineArgs = new ArrayList<>();
         File testJettyHome = MavenTestingUtils.getTestResourceDir("dist-home");
         cmdLineArgs.add("user.dir=" + testJettyHome);
+        cmdLineArgs.add("-Duser.dir=foo"); // used to test "source" display on "Java Environment"
         cmdLineArgs.add("jetty.home=" + testJettyHome);
         cmdLineArgs.add("--list-config");
-        // cmdLineArgs.add("--debug");
 
+        List<String> output;
         Main main = new Main();
         StartArgs args = main.processCommandLine(cmdLineArgs.toArray(new String[0]));
-        main.listConfig(args);
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
+             PrintStream out = new PrintStream(baos, true, StandardCharsets.UTF_8))
+        {
+            main.listConfig(out, args);
+            out.flush();
+            output = List.of(baos.toString(StandardCharsets.UTF_8).split(System.lineSeparator()));
+        }
+
+        // Test a System Property that comes from JVM
+        String javaVersionLine = output.stream().filter((line) -> line.contains("java.version ="))
+            .findFirst().orElseThrow();
+        assertThat("java.version should have no indicated source", javaVersionLine, not(containsString("(null)")));
+
+        String userDirLine = output.stream().filter((line) -> line.startsWith(" user.dir ="))
+            .findFirst().orElseThrow();
+        assertThat("A source of 'null' is pointless", userDirLine, not(containsString("(null)")));
+        assertThat("user.dir should indicate that it was specified on the command line", userDirLine, containsString("(<command-line>)"));
+    }
+
+    @Test
+    public void testUnknownDistroCommand() throws Exception
+    {
+        List<String> cmdLineArgs = new ArrayList<>();
+        File testJettyHome = MavenTestingUtils.getTestResourceDir("dist-home");
+        Path testJettyBase = MavenTestingUtils.getTargetTestingPath("base-example-unknown");
+        FS.ensureDirectoryExists(testJettyBase);
+        Path zedIni = testJettyBase.resolve("start.d/zed.ini");
+        FS.ensureDirectoryExists(zedIni.getParent());
+        Files.writeString(zedIni, "--zed-0-zed");
+        cmdLineArgs.add("jetty.home=" + testJettyHome);
+        cmdLineArgs.add("jetty.base=" + testJettyBase);
+        cmdLineArgs.add("main.class=" + PropertyDump.class.getName());
+        cmdLineArgs.add("--module=base");
+        cmdLineArgs.add("--foople");
+        cmdLineArgs.add("-Dzed.key=0.value");
+
+        List<String> output;
+
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
+             PrintStream out = new PrintStream(baos, true, StandardCharsets.UTF_8))
+        {
+            PrintStream originalStream = StartLog.setStream(new PrintStream(out));
+            try
+            {
+                Main main = new Main();
+                StartArgs args = main.processCommandLine(cmdLineArgs.toArray(new String[0]));
+                main.start(args);
+                out.flush();
+                output = List.of(baos.toString(StandardCharsets.UTF_8).split(System.lineSeparator()));
+            }
+            finally
+            {
+                StartLog.setStream(originalStream);
+            }
+        }
+
+        // Test a System Property that comes from JVM
+        List<String> warnings = output.stream().filter((line) -> line.startsWith("WARN")).collect(Collectors.toList());
+        // warnings.forEach(System.out::println);
+        Iterator<String> warningIter = warnings.iterator();
+
+        assertThat("Announcement", warningIter.next(), containsString("Unknown Arguments detected."));
+        assertThat("System Prop on command line detail", warningIter.next(), containsString("Argument: -Dzed.key=0.value (interpreted as a System property, from <command-line>"));
+        assertThat("JVM Arg in ini detail", warningIter.next(), containsString("Argument: --zed-0-zed (interpreted as a JVM argument, from " + zedIni));
+        assertThat("JVM Arg on command line detail", warningIter.next(), containsString("Argument: --foople (interpreted as a JVM argument, from <command-line>"));
     }
 
     @Test
@@ -118,46 +148,6 @@ public class MainTest
     {
         Main main = new Main();
         main.usage(false);
-    }
-
-    @Test
-    public void testWithCommandLine() throws Exception
-    {
-        List<String> cmdLineArgs = new ArrayList<>();
-
-        Path homePath = MavenTestingUtils.getTestResourceDir("dist-home").toPath().toRealPath();
-        cmdLineArgs.add("jetty.home=" + homePath);
-        cmdLineArgs.add("user.dir=" + homePath);
-
-        // JVM args
-        cmdLineArgs.add("--exec");
-        cmdLineArgs.add("-Xms1024m");
-        cmdLineArgs.add("-Xmx1024m");
-
-        // Arbitrary Libs
-        Path extraJar = MavenTestingUtils.getTestResourceFile("extra-libs/example.jar").toPath().toRealPath();
-        Path extraDir = MavenTestingUtils.getTestResourceDir("extra-resources").toPath().toRealPath();
-
-        assertThat("Extra Jar exists: " + extraJar, Files.exists(extraJar), is(true));
-        assertThat("Extra Dir exists: " + extraDir, Files.exists(extraDir), is(true));
-
-        String lib = "--lib=" + extraJar + File.pathSeparator + extraDir;
-        cmdLineArgs.add(lib);
-
-        // Arbitrary XMLs
-        cmdLineArgs.add("config.xml");
-        cmdLineArgs.add("config-foo.xml");
-        cmdLineArgs.add("config-bar.xml");
-
-        Main main = new Main();
-
-        StartArgs args = main.processCommandLine(cmdLineArgs.toArray(new String[0]));
-        BaseHome baseHome = main.getBaseHome();
-
-        assertThat("jetty.home", baseHome.getHome(), is(homePath.toString()));
-        assertThat("jetty.base", baseHome.getBase(), is(homePath.toString()));
-
-        ConfigurationAssert.assertConfiguration(baseHome, args, "assert-home-with-jvm.txt");
     }
 
     @Test
@@ -189,96 +179,5 @@ public class MainTest
             baseHome.getBase(), System.getProperty("java.version")
         );
         assertThat(commandLine, containsString(expectedExpansion));
-    }
-
-    @Test
-    public void testWithModules() throws Exception
-    {
-        List<String> cmdLineArgs = new ArrayList<>();
-
-        Path homePath = MavenTestingUtils.getTestResourceDir("dist-home").toPath().toRealPath();
-        cmdLineArgs.add("jetty.home=" + homePath);
-        cmdLineArgs.add("user.dir=" + homePath);
-        cmdLineArgs.add("java.version=1.8.0_31");
-
-        // Modules
-        cmdLineArgs.add("--module=optional,extra");
-
-        Main main = new Main();
-
-        StartArgs args = main.processCommandLine(cmdLineArgs.toArray(new String[0]));
-        BaseHome baseHome = main.getBaseHome();
-
-        assertThat("jetty.home", baseHome.getHome(), is(homePath.toString()));
-        assertThat("jetty.base", baseHome.getBase(), is(homePath.toString()));
-
-        ConfigurationAssert.assertConfiguration(baseHome, args, "assert-home-with-module.txt");
-    }
-
-    @Test
-    public void testJettyHomeWithSpaces() throws Exception
-    {
-        Path distPath = MavenTestingUtils.getTestResourceDir("dist-home").toPath().toRealPath();
-        Path homePath = MavenTestingUtils.getTargetTestingPath().resolve("dist home with spaces");
-        if (!Files.exists(homePath))
-        {
-            IO.copy(distPath.toFile(), homePath.toFile());
-            Files.createFile(homePath.resolve("lib/a library.jar"));
-        }
-
-        List<String> cmdLineArgs = new ArrayList<>();
-        cmdLineArgs.add("user.dir=" + homePath);
-        cmdLineArgs.add("jetty.home=" + homePath);
-        cmdLineArgs.add("--lib=lib/a library.jar");
-
-        Main main = new Main();
-        StartArgs args = main.processCommandLine(cmdLineArgs.toArray(new String[0]));
-        BaseHome baseHome = main.getBaseHome();
-
-        assertThat("jetty.home", baseHome.getHome(), is(homePath.toString()));
-        assertThat("jetty.base", baseHome.getBase(), is(homePath.toString()));
-
-        ConfigurationAssert.assertConfiguration(baseHome, args, "assert-home-with-spaces.txt");
-    }
-
-    @Test
-    public void testProvidersUsingDefault() throws Exception
-    {
-        Path homePath = MavenTestingUtils.getTestResourceDir("providers-home").toPath().toRealPath();
-
-        List<String> cmdLineArgs = new ArrayList<>();
-        cmdLineArgs.add("user.dir=" + homePath);
-        cmdLineArgs.add("jetty.home=" + homePath);
-        cmdLineArgs.add("--module=server");
-
-        Main main = new Main();
-        StartArgs args = main.processCommandLine(cmdLineArgs.toArray(new String[cmdLineArgs.size()]));
-        BaseHome baseHome = main.getBaseHome();
-
-        assertThat("jetty.home", baseHome.getHome(), is(homePath.toString()));
-        assertThat("jetty.base", baseHome.getBase(), is(homePath.toString()));
-
-        ConfigurationAssert.assertConfiguration(baseHome, args, "assert-providers-default.txt");
-    }
-
-    @Test
-    public void testProvidersUsingSpecific() throws Exception
-    {
-        Path homePath = MavenTestingUtils.getTestResourceDir("providers-home").toPath().toRealPath();
-
-        List<String> cmdLineArgs = new ArrayList<>();
-        cmdLineArgs.add("user.dir=" + homePath);
-        cmdLineArgs.add("jetty.home=" + homePath);
-        cmdLineArgs.add("--module=server");
-        cmdLineArgs.add("--module=logging-b");
-
-        Main main = new Main();
-        StartArgs args = main.processCommandLine(cmdLineArgs.toArray(new String[cmdLineArgs.size()]));
-        BaseHome baseHome = main.getBaseHome();
-
-        assertThat("jetty.home", baseHome.getHome(), is(homePath.toString()));
-        assertThat("jetty.base", baseHome.getBase(), is(homePath.toString()));
-
-        ConfigurationAssert.assertConfiguration(baseHome, args, "assert-providers-specific.txt");
     }
 }

@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -19,6 +19,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.InvalidPathException;
 import java.util.Collection;
 import java.util.Enumeration;
 import java.util.List;
@@ -297,6 +298,16 @@ public class ResourceService
             // Send the data
             releaseContent = sendData(request, response, included, content, reqRanges);
         }
+        // Can be thrown from contentFactory.getContent() call when using invalid characters
+        catch (InvalidPathException e)
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("InvalidPathException for pathInContext: {}", pathInContext, e);
+            if (included)
+                throw new FileNotFoundException("!" + pathInContext);
+            notFound(request, response);
+            return response.isCommitted();
+        }
         catch (IllegalArgumentException e)
         {
             LOG.warn("Failed to serve resource: {}", pathInContext, e);
@@ -325,6 +336,7 @@ public class ResourceService
         if (headers.hasMoreElements())
         {
             StringBuilder sb = new StringBuilder(key.length() * 2);
+            sb.append(key);
             do
             {
                 sb.append(',').append(headers.nextElement());
@@ -378,23 +390,20 @@ public class ResourceService
         // Redirect to directory
         if (!endsWithSlash)
         {
-            StringBuffer buf = request.getRequestURL();
-            synchronized (buf)
+            StringBuilder buf = new StringBuilder(request.getRequestURI());
+            int param = buf.lastIndexOf(";");
+            if (param < 0 || buf.lastIndexOf("/", param) > 0)
+                buf.append('/');
+            else
+                buf.insert(param, '/');
+            String q = request.getQueryString();
+            if (q != null && q.length() != 0)
             {
-                int param = buf.lastIndexOf(";");
-                if (param < 0)
-                    buf.append('/');
-                else
-                    buf.insert(param, '/');
-                String q = request.getQueryString();
-                if (q != null && q.length() != 0)
-                {
-                    buf.append('?');
-                    buf.append(q);
-                }
-                response.setContentLength(0);
-                response.sendRedirect(response.encodeRedirectURL(buf.toString()));
+                buf.append('?');
+                buf.append(q);
             }
+            response.setContentLength(0);
+            response.sendRedirect(response.encodeRedirectURL(buf.toString()));
             return;
         }
 
@@ -428,7 +437,7 @@ public class ResourceService
                 return;
             }
 
-            RequestDispatcher dispatcher = context.getRequestDispatcher(welcome);
+            RequestDispatcher dispatcher = context.getRequestDispatcher(URIUtil.encodePath(welcome));
             if (dispatcher != null)
             {
                 // Forward to the index
@@ -715,6 +724,12 @@ public class ResourceService
                                 LOG.warn(msg, x);
                             context.complete();
                             content.release();
+                        }
+
+                        @Override
+                        public InvocationType getInvocationType()
+                        {
+                            return InvocationType.NON_BLOCKING;
                         }
 
                         @Override

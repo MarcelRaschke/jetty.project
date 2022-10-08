@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -24,6 +24,7 @@ import org.eclipse.jetty.http2.generator.PingGenerator;
 import org.eclipse.jetty.http2.parser.Parser;
 import org.eclipse.jetty.io.ByteBufferPool;
 import org.eclipse.jetty.io.MappedByteBufferPool;
+import org.eclipse.jetty.util.NanoTime;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -133,7 +134,7 @@ public class PingGenerateParseTest
         parser.init(UnaryOperator.identity());
 
         ByteBufferPool.Lease lease = new ByteBufferPool.Lease(byteBufferPool);
-        PingFrame ping = new PingFrame(System.nanoTime(), true);
+        PingFrame ping = new PingFrame(NanoTime.now(), true);
         generator.generate(lease, ping);
 
         for (ByteBuffer buffer : lease.getByteBuffers())

@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -28,7 +28,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.Stack;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.servlet.GenericServlet;
 import javax.servlet.MultipartConfigElement;
@@ -50,6 +49,7 @@ import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.UserIdentity;
 import org.eclipse.jetty.server.handler.ContextHandler;
 import org.eclipse.jetty.util.Loader;
+import org.eclipse.jetty.util.NanoTime;
 import org.eclipse.jetty.util.StringUtil;
 import org.eclipse.jetty.util.annotation.ManagedAttribute;
 import org.eclipse.jetty.util.annotation.ManagedObject;
@@ -294,6 +294,14 @@ public class ServletHolder extends Holder<Servlet> implements UserIdentity.Scope
         _forcedPath = forcedPath;
     }
 
+    private void setClassFrom(ServletHolder holder)
+    {
+        if (_servlet != null || getInstance() != null)
+            throw new IllegalStateException();
+        this.setClassName(holder.getClassName());
+        this.setHeldClass(holder.getHeldClass());
+    }
+
     public boolean isEnabled()
     {
         return _enabled;
@@ -325,8 +333,8 @@ public class ServletHolder extends Holder<Servlet> implements UserIdentity.Scope
                 {
                     if (LOG.isDebugEnabled())
                         LOG.debug("JSP file {} for {} mapped to Servlet {}", _forcedPath, getName(), jsp.getClassName());
-                    // set the className for this servlet to the precompiled one
-                    setClassName(jsp.getClassName());
+                    // set the className/servlet/instance for this servlet to the precompiled one
+                    setClassFrom(jsp);
                 }
                 else
                 {
@@ -336,7 +344,7 @@ public class ServletHolder extends Holder<Servlet> implements UserIdentity.Scope
                     {
                         if (LOG.isDebugEnabled())
                             LOG.debug("JSP file {} for {} mapped to JspServlet class {}", _forcedPath, getName(), jsp.getClassName());
-                        setClassName(jsp.getClassName());
+                        setClassFrom(jsp);
                         //copy jsp init params that don't exist for this servlet
                         for (Map.Entry<String, String> entry : jsp.getInitParameters().entrySet())
                         {
@@ -927,7 +935,6 @@ public class ServletHolder extends Holder<Servlet> implements UserIdentity.Scope
 
     protected class Config extends HolderConfig implements ServletConfig
     {
-
         @Override
         public String getServletName()
         {
@@ -1185,9 +1192,9 @@ public class ServletHolder extends Holder<Servlet> implements UserIdentity.Scope
     @Override
     public String toString()
     {
-        return String.format("%s==%s@%x{jsp=%s,order=%d,inst=%b,async=%b,src=%s}",
+        return String.format("%s==%s@%x{jsp=%s,order=%d,inst=%b,async=%b,src=%s,%s}",
             getName(), getClassName(), hashCode(),
-            _forcedPath, _initOrder, _servlet != null, isAsyncSupported(), getSource());
+            _forcedPath, _initOrder, _servlet != null, isAsyncSupported(), getSource(), getState());
     }
 
     private class UnavailableServlet extends Wrapper
@@ -1211,9 +1218,9 @@ public class ServletHolder extends Holder<Servlet> implements UserIdentity.Scope
                 _unavailableStart = null;
             else
             {
-                long start = System.nanoTime();
+                long start = NanoTime.now();
                 while (start == 0)
-                    start = System.nanoTime();
+                    start = NanoTime.now();
                 _unavailableStart = new AtomicLong(start);
             }
         }
@@ -1231,7 +1238,7 @@ public class ServletHolder extends Holder<Servlet> implements UserIdentity.Scope
             {
                 long start = _unavailableStart.get();
 
-                if (start == 0 || System.nanoTime() - start < TimeUnit.SECONDS.toNanos(_unavailableException.getUnavailableSeconds()))
+                if (start == 0 || NanoTime.secondsSince(start) < _unavailableException.getUnavailableSeconds())
                 {
                     ((HttpServletResponse)res).sendError(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
                 }

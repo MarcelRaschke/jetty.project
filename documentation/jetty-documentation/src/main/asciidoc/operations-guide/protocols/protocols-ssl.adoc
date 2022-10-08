@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -15,9 +15,11 @@
 ==== Configuring Secure Protocols
 
 Secure protocols are normal protocols such as HTTP/1.1, HTTP/2 or WebSocket that are wrapped by the link:https://en.wikipedia.org/wiki/Transport_Layer_Security[TLS protocol].
-Any network protocol can be wrapped with TLS.
+Any network protocol based on TCP can be wrapped with TLS.
 
-The `https` scheme used in URIs really means `tls+http/1.1` (or `tls+http/2`) and similarly the `wss` scheme used in URIs really means `tls+websocket`, etc.
+QUIC, the protocol based on UDP that transports HTTP/3, uses TLS messages but not the TLS protocol framing.
+
+The `https` scheme used in URIs really means `tls+http/1.1` (or `tls+http/2`, or `quic+http/3`) and similarly the `wss` scheme used in URIs really means `tls+websocket`, etc.
 Senders wrap the underlying protocol bytes (e.g. HTTP bytes or WebSocket bytes) with the TLS protocol, while receivers first interpret the TLS protocol to obtain the underlying protocol bytes, and then interpret the wrapped bytes.
 
 The xref:og-module-ssl[`ssl` Jetty module] allows you to configure a secure network connector; if other modules require encryption, they declare a dependency on the `ssl` module.
@@ -69,7 +71,7 @@ You want to create the `$JETTY_BASE/etc/tls-config.xml` with the following templ
 
 The `tls-config.xml` file references the `sslContextFactory` component (created by the `ssl` Jetty module) that configures the KeyStore and TLS parameters, so that you can now call its APIs via XML, and you will have full flexibility for any advanced configuration you want (see below for few examples).
 
-Refer to the link:{JDURL}/org/eclipse/jetty/util/ssl/SslContextFactory.html[SslContextFactory javadocs] for the list of methods that you can call through the Jetty XML file.
+Refer to the link:{javadoc-url}/org/eclipse/jetty/util/ssl/SslContextFactory.html[SslContextFactory javadocs] for the list of methods that you can call through the Jetty XML file.
 
 CAUTION: Use module properties whenever possible, and only resort to use a Jetty XML file for advanced configuration that you cannot do using module properties.
 

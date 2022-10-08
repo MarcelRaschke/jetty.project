@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -42,7 +42,7 @@ mywebapp.war
 <1> Publicly accessible resources such as `+*.html+`, `+*.jsp+`, `+*.css+`, `+*.js+` files, etc. are placed in `+*.war+` or in sub-directories of the `+*.war+`.
 <2> `WEB-INF` is a special directory used to store anything related to the web application that must not be publicly accessible, but may be accessed by other resources.
 <3> `WEB-INF/classes` stores the web application compiled `+*.class+` files
-<4> `WEB-INF/classes` stores the web application `+*.jar+` files
+<4> `WEB-INF/lib` stores the web application `+*.jar+` files
 <5> `WEB-INF/web.xml` is the web application deployment descriptor defines the components and the configuration of your web application.
 ====
 
@@ -63,7 +63,7 @@ The `deploy` module creates the `$JETTY_BASE/webapps` directory, the directory w
 ====
 The `deploy` module only provides the feature of deploying web applications.
 
-Whether these web applications are served via clear-text HTTP/1.1, or secure HTTP/1.1, or secure HTTP/2 (or even all of these protocols) depends on whether the correspondent Jetty modules have been enabled.
+Whether these web applications are served via clear-text HTTP/1.1, or secure HTTP/1.1, or secure HTTP/2, or HTTP/3 (or even all of these protocols) depends on whether the correspondent Jetty modules have been enabled.
 Refer to the xref:og-protocols[section about protocols] for further information.
 ====
 

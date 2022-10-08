@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -45,7 +45,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.ops4j.pax.exam.CoreOptions.mavenBundle;
-import static org.ops4j.pax.exam.CoreOptions.wrappedBundle;
 
 @RunWith(PaxExam.class)
 @ExamReactorStrategy(PerClass.class)
@@ -70,8 +69,8 @@ public class TestJettyOSGiBootHTTP2Conscrypt
             "sun.security", "sun.security.x509", "sun.security.ssl"));
         options.addAll(http2JettyDependencies());
 
-        options.addAll(TestOSGiUtil.coreJettyDependencies());
-        options.addAll(TestOSGiUtil.jspDependencies());
+        TestOSGiUtil.coreJettyDependencies(options);
+        TestOSGiUtil.coreJspDependencies(options);
         //deploy a test webapp
         options.add(mavenBundle().groupId("org.eclipse.jetty.demos").artifactId("demo-jsp-webapp").classifier("webbundle").versionAsInProject());
         options.add(mavenBundle().groupId("org.eclipse.jetty").artifactId("jetty-alpn-conscrypt-client").versionAsInProject().start());
@@ -89,11 +88,7 @@ public class TestJettyOSGiBootHTTP2Conscrypt
         res.add(CoreOptions.systemProperty("jetty.alpn.protocols").value("h2,http/1.1"));
         res.add(CoreOptions.systemProperty("jetty.sslContext.provider").value("Conscrypt"));
 
-        res.add(wrappedBundle(mavenBundle().groupId("org.conscrypt").artifactId("conscrypt-openjdk-uber").versionAsInProject())
-            .imports("javax.net.ssl,*")
-            .exports("org.conscrypt;version=" + System.getProperty("conscrypt-version"))
-            .instructions("Bundle-NativeCode=META-INF/native/libconscrypt_openjdk_jni-linux-x86_64.so")
-            .start());
+        res.add(mavenBundle().groupId("org.conscrypt").artifactId("conscrypt-openjdk-uber").versionAsInProject().start());
         res.add(mavenBundle().groupId("org.eclipse.jetty.osgi").artifactId("jetty-osgi-alpn").versionAsInProject().noStart());
         res.add(mavenBundle().groupId("org.eclipse.jetty").artifactId("jetty-alpn-conscrypt-server").versionAsInProject().start());
         res.add(mavenBundle().groupId("org.eclipse.jetty").artifactId("jetty-alpn-server").versionAsInProject().start());

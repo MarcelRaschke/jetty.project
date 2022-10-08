@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -344,7 +344,6 @@ public class HttpGenerator
             _endOfContent = EndOfContent.UNKNOWN_CONTENT;
             return Result.FLUSH;
         }
-
         _state = State.END;
         return Boolean.TRUE.equals(_persistent) ? Result.DONE : Result.SHUTDOWN_OUT;
     }
@@ -386,15 +385,21 @@ public class HttpGenerator
 
                     // Handle 1xx and no content responses
                     int status = info.getStatus();
-                    if (status >= 100 && status < 200)
+                    if (HttpStatus.isInformational(status))
                     {
                         _noContentResponse = true;
-
-                        if (status != HttpStatus.SWITCHING_PROTOCOLS_101)
+                        switch (status)
                         {
-                            header.put(HttpTokens.CRLF);
-                            _state = State.COMPLETING_1XX;
-                            return Result.FLUSH;
+                            case HttpStatus.SWITCHING_PROTOCOLS_101:
+                                break;
+                            case HttpStatus.EARLY_HINT_103:
+                                generateHeaders(header, content, last);
+                                _state = State.COMPLETING_1XX;
+                                return Result.FLUSH;
+                            default:
+                                header.put(HttpTokens.CRLF);
+                                _state = State.COMPLETING_1XX;
+                                return Result.FLUSH;
                         }
                     }
                     else if (status == HttpStatus.NO_CONTENT_204 || status == HttpStatus.NOT_MODIFIED_304)

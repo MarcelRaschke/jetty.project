@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -722,6 +722,39 @@ public class ServletContextHandlerTest
         HttpTester.Response response = HttpTester.parseResponse(rawResponse);
         assertEquals(200, response.getStatus(), "response status");
         assertEquals("getContextPath()=[]", response.getContent(), "response content");
+    }
+
+    /**
+     * Address spec "3.5. Request Path Elements" with respect to Servlet Path.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"/*", ""})
+    public void testGetServletPathEmpty(String pathSpec) throws Exception
+    {
+        ServletContextHandler contextHandler = new ServletContextHandler();
+        contextHandler.setContextPath("");
+        contextHandler.addServlet(new ServletHolder(new HttpServlet()
+        {
+            @Override
+            protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException
+            {
+                resp.setContentType("text/plain");
+                resp.setCharacterEncoding("utf-8");
+                resp.getWriter().printf("getServletPath()=[%s]", req.getServletPath());
+            }
+        }), pathSpec);
+        _server.setHandler(contextHandler);
+        _server.start();
+
+        StringBuilder rawRequest = new StringBuilder();
+        rawRequest.append("GET / HTTP/1.1\r\n");
+        rawRequest.append("Host: local\r\n");
+        rawRequest.append("Connection: close\r\n");
+        rawRequest.append("\r\n");
+        String rawResponse = _connector.getResponse(rawRequest.toString());
+        HttpTester.Response response = HttpTester.parseResponse(rawResponse);
+        assertEquals(200, response.getStatus(), "response status");
+        assertEquals("getServletPath()=[]", response.getContent(), "response content");
     }
 
     @Test

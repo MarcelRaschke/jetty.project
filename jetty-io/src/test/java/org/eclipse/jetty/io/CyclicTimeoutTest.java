@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -13,14 +13,12 @@
 
 package org.eclipse.jetty.io;
 
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-import org.eclipse.jetty.util.thread.QueuedThreadPool;
+import org.eclipse.jetty.util.NanoTime;
 import org.eclipse.jetty.util.thread.ScheduledExecutorScheduler;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -29,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class CyclicTimeoutTest
 {
     private volatile boolean _expired;
-    private ScheduledExecutorScheduler _timer = new ScheduledExecutorScheduler();
+    private final ScheduledExecutorScheduler _timer = new ScheduledExecutorScheduler();
     private CyclicTimeout _timeout;
 
     @BeforeEach
@@ -135,27 +133,13 @@ public class CyclicTimeoutTest
     }
 
     @Test
-    @Disabled
-    public void testBusy() throws Exception
+    public void testBusy()
     {
-        QueuedThreadPool pool = new QueuedThreadPool(200);
-        pool.start();
-
-        long testUntil = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1500);
-
-        assertTrue(_timeout.schedule(100, TimeUnit.MILLISECONDS));
-        while (System.nanoTime() < testUntil)
-        {
-            CountDownLatch latch = new CountDownLatch(1);
-            pool.execute(() ->
-            {
-                _timeout.schedule(100, TimeUnit.MILLISECONDS);
-                latch.countDown();
-            });
-            latch.await();
-        }
-
+        assertTrue(_timeout.schedule(500, TimeUnit.MILLISECONDS));
+        long start = NanoTime.now();
+        while (NanoTime.secondsSince(start) < 2)
+            _timeout.schedule(500, TimeUnit.MILLISECONDS);
+        _timeout.cancel();
         assertFalse(_expired);
-        pool.stop();
     }
 }

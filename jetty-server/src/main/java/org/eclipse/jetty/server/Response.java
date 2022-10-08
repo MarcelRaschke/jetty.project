@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -342,6 +342,9 @@ public class Response implements HttpServletResponse
     @Override
     public String encodeURL(String url)
     {
+        if (url == null)
+            return null;
+
         final Request request = _channel.getRequest();
         SessionHandler sessionManager = request.getSessionHandler();
 
@@ -349,7 +352,8 @@ public class Response implements HttpServletResponse
             return url;
 
         HttpURI uri = null;
-        if (sessionManager.isCheckingRemoteSessionIdEncoding() && URIUtil.hasScheme(url))
+        boolean hasScheme = URIUtil.hasScheme(url);
+        if (sessionManager.isCheckingRemoteSessionIdEncoding() && hasScheme)
         {
             uri = HttpURI.from(url);
             String path = uri.getPath();
@@ -370,9 +374,6 @@ public class Response implements HttpServletResponse
         String sessionURLPrefix = sessionManager.getSessionIdPathParameterNamePrefix();
         if (sessionURLPrefix == null)
             return url;
-
-        if (url == null)
-            return null;
 
         // should not encode if cookies in evidence
         if ((sessionManager.isUsingCookies() && request.isRequestedSessionIdFromCookie()) || !sessionManager.isUsingURLs())
@@ -404,9 +405,6 @@ public class Response implements HttpServletResponse
 
         String id = sessionManager.getExtendedId(session);
 
-        if (uri == null)
-            uri = HttpURI.from(url);
-
         // Already encoded
         int prefix = url.indexOf(sessionURLPrefix);
         if (prefix != -1)
@@ -421,20 +419,24 @@ public class Response implements HttpServletResponse
                 url.substring(suffix);
         }
 
+        // check for a null path
+        String nonNullPath = "";
+        if (hasScheme)
+        {
+            if (uri == null)
+                uri = HttpURI.from(url);
+            if (uri.getPath() == null)
+                nonNullPath = "/";
+        }
+
         // edit the session
         int suffix = url.indexOf('?');
         if (suffix < 0)
             suffix = url.indexOf('#');
         if (suffix < 0)
-        {
-            return url +
-                ((HttpScheme.HTTPS.is(uri.getScheme()) || HttpScheme.HTTP.is(uri.getScheme())) && uri.getPath() == null ? "/" : "") + //if no path, insert the root path
-                sessionURLPrefix + id;
-        }
+            return url + nonNullPath + sessionURLPrefix + id;
 
-        return url.substring(0, suffix) +
-            ((HttpScheme.HTTPS.is(uri.getScheme()) || HttpScheme.HTTP.is(uri.getScheme())) && uri.getPath() == null ? "/" : "") + //if no path so insert the root path
-            sessionURLPrefix + id + url.substring(suffix);
+        return url.substring(0, suffix) + nonNullPath + sessionURLPrefix + id + url.substring(suffix);
     }
 
     @Override
@@ -468,6 +470,7 @@ public class Response implements HttpServletResponse
      * <p>In addition to the servlet standard handling, this method supports some additional codes:</p>
      * <dl>
      * <dt>102</dt><dd>Send a partial PROCESSING response and allow additional responses</dd>
+     * <dt>103</dt><dd>Send a partial EARLY_HINT response as per <a href="https://datatracker.ietf.org/doc/html/rfc8297">RFC8297</a></dd>
      * <dt>-1</dt><dd>Abort the HttpChannel and close the connection/stream</dd>
      * </dl>
      * @param code The error code
@@ -488,6 +491,9 @@ public class Response implements HttpServletResponse
             case HttpStatus.PROCESSING_102:
                 sendProcessing();
                 break;
+            case HttpStatus.EARLY_HINT_103:
+                sendEarlyHint();
+                break;
             default:
                 _channel.getState().sendError(code, message);
                 break;
@@ -496,9 +502,8 @@ public class Response implements HttpServletResponse
 
     /**
      * Sends a 102-Processing response.
-     * If the connection is an HTTP connection, the version is 1.1 and the
-     * request has a Expect header starting with 102, then a 102 response is
-     * sent. This indicates that the request still be processed and real response
+     * If the request had an Expect header starting with 102, then
+     * a 102 response is sent. This indicates that the request still be processed and real response
      * can still be sent.   This method is called by sendError if it is passed 102.
      *
      * @throws IOException if unable to send the 102 response
@@ -510,6 +515,22 @@ public class Response implements HttpServletResponse
         {
             _channel.sendResponse(HttpGenerator.PROGRESS_102_INFO, null, true);
         }
+    }
+
+    /**
+     * Sends a 103 Early Hint response.
+     *
+     * Send a 103 response as per <a href="https://datatracker.ietf.org/doc/html/rfc8297">RFC8297</a>
+     * This method is called by sendError if it is passed 103.
+     *
+     * @throws IOException if unable to send the 103 response
+     * @see javax.servlet.http.HttpServletResponse#sendError(int)
+     */
+    public void sendEarlyHint() throws IOException
+    {
+        if (!isCommitted())
+            _channel.sendResponse(new MetaData.Response(_channel.getRequest().getHttpVersion(), HttpStatus.EARLY_HINT_103,
+                _channel.getResponse()._fields.asImmutable()), null, true);
     }
 
     /**
@@ -568,14 +589,14 @@ public class Response implements HttpServletResponse
             if (location.startsWith("/"))
             {
                 // absolute in context
-                location = URIUtil.canonicalEncodedPath(location);
+                location = URIUtil.canonicalURI(location);
             }
             else
             {
                 // relative to request
                 String path = _channel.getRequest().getRequestURI();
                 String parent = (path.endsWith("/")) ? path : URIUtil.parentPath(path);
-                location = URIUtil.canonicalEncodedPath(URIUtil.addEncodedPaths(parent, location));
+                location = URIUtil.canonicalURI(URIUtil.addEncodedPaths(parent, location));
                 if (location != null && !location.startsWith("/"))
                     buf.append('/');
             }

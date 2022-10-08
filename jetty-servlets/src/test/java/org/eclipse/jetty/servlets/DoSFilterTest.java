@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -16,7 +16,6 @@ package org.eclipse.jetty.servlets;
 import java.net.InetSocketAddress;
 import java.util.Collections;
 import java.util.Enumeration;
-import java.util.concurrent.TimeUnit;
 import javax.servlet.FilterConfig;
 import javax.servlet.ServletContext;
 import javax.servlet.ServletException;
@@ -27,6 +26,7 @@ import org.eclipse.jetty.server.handler.ContextHandler;
 import org.eclipse.jetty.servlets.DoSFilter.RateTracker;
 import org.eclipse.jetty.toolchain.test.jupiter.WorkDir;
 import org.eclipse.jetty.toolchain.test.jupiter.WorkDirExtension;
+import org.eclipse.jetty.util.NanoTime;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -174,7 +174,7 @@ public class DoSFilterTest extends AbstractDoSFilterTest
         for (int i = 0; i < 5; i++)
         {
             Thread.sleep(sleep);
-            if (rateTracker.isRateExceeded(TimeUnit.NANOSECONDS.toMillis(System.nanoTime())) != null)
+            if (rateTracker.isRateExceeded(NanoTime.now()) != null)
                 exceeded = true;
         }
         return exceeded;

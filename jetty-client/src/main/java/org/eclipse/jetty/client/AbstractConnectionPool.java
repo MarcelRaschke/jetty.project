@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -29,6 +29,7 @@ import org.eclipse.jetty.client.api.Connection;
 import org.eclipse.jetty.util.Attachable;
 import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.IO;
+import org.eclipse.jetty.util.NanoTime;
 import org.eclipse.jetty.util.Pool;
 import org.eclipse.jetty.util.Promise;
 import org.eclipse.jetty.util.annotation.ManagedAttribute;
@@ -55,7 +56,12 @@ public abstract class AbstractConnectionPool extends ContainerLifeCycle implemen
 
     protected AbstractConnectionPool(HttpDestination destination, int maxConnections, boolean cache, Callback requester)
     {
-        this(destination, new Pool<>(Pool.StrategyType.FIRST, maxConnections, cache), requester);
+        this(destination, Pool.StrategyType.FIRST, maxConnections, cache, requester);
+    }
+
+    protected AbstractConnectionPool(HttpDestination destination, Pool.StrategyType strategy, int maxConnections, boolean cache, Callback requester)
+    {
+        this(destination, new Pool<>(strategy, maxConnections, cache), requester);
     }
 
     protected AbstractConnectionPool(HttpDestination destination, Pool<Connection> pool, Callback requester)
@@ -63,6 +69,7 @@ public abstract class AbstractConnectionPool extends ContainerLifeCycle implemen
         this.destination = destination;
         this.requester = requester;
         this.pool = pool;
+        pool.setMaxMultiplex(1); // Force the use of multiplexing.
         addBean(pool);
     }
 
@@ -268,6 +275,8 @@ public abstract class AbstractConnectionPool extends ContainerLifeCycle implemen
         if (entry == null)
         {
             pending.decrementAndGet();
+            if (LOG.isDebugEnabled())
+                LOG.debug("Not creating connection as pool {} is full, pending: {}", pool, pending);
             return;
         }
 
@@ -315,7 +324,7 @@ public abstract class AbstractConnectionPool extends ContainerLifeCycle implemen
                     EntryHolder holder = (EntryHolder)((Attachable)connection).getAttachment();
                     if (holder.isExpired(maxDurationNanos))
                     {
-                        boolean canClose = remove(connection, true);
+                        boolean canClose = remove(connection);
                         if (canClose)
                             IO.close(connection);
                         if (LOG.isDebugEnabled())
@@ -362,22 +371,27 @@ public abstract class AbstractConnectionPool extends ContainerLifeCycle implemen
         EntryHolder holder = (EntryHolder)attachable.getAttachment();
         if (holder == null)
             return true;
-        boolean reusable = pool.release(holder.entry);
-        if (LOG.isDebugEnabled())
-            LOG.debug("Released ({}) {} {}", reusable, holder.entry, pool);
-        if (reusable)
-            return true;
-        remove(connection);
-        return false;
+
+        long maxDurationNanos = this.maxDurationNanos;
+        if (maxDurationNanos > 0L && holder.isExpired(maxDurationNanos))
+        {
+            // Remove instead of release if the connection expired.
+            return !remove(connection);
+        }
+        else
+        {
+            // Release if the connection has not expired, then remove if not reusable.
+            boolean reusable = pool.release(holder.entry);
+            if (LOG.isDebugEnabled())
+                LOG.debug("Released ({}) {} {}", reusable, holder.entry, pool);
+            if (reusable)
+                return true;
+            return !remove(connection);
+        }
     }
 
     @Override
     public boolean remove(Connection connection)
-    {
-        return remove(connection, false);
-    }
-
-    protected boolean remove(Connection connection, boolean force)
     {
         if (!(connection instanceof Attachable))
             throw new IllegalArgumentException("Invalid connection object: " + connection);
@@ -390,12 +404,18 @@ public abstract class AbstractConnectionPool extends ContainerLifeCycle implemen
             attachable.setAttachment(null);
         if (LOG.isDebugEnabled())
             LOG.debug("Removed ({}) {} {}", removed, holder.entry, pool);
-        if (removed || force)
+        if (removed)
         {
             released(connection);
             removed(connection);
         }
         return removed;
+    }
+
+    @Deprecated
+    protected boolean remove(Connection connection, boolean force)
+    {
+        return remove(connection);
     }
 
     protected void onCreated(Connection connection)
@@ -440,6 +460,30 @@ public abstract class AbstractConnectionPool extends ContainerLifeCycle implemen
     @Override
     public void close()
     {
+        // Forcibly release and remove entries to do our best effort calling the listeners.
+        try
+        {
+            for (Pool<Connection>.Entry entry : pool.values())
+            {
+                while (entry.isInUse())
+                {
+                    if (entry.release())
+                    {
+                        released(entry.getPooled());
+                        break;
+                    }
+                }
+                if (entry.remove())
+                    removed(entry.getPooled());
+            }
+        }
+        catch (Throwable x)
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("Detected concurrent modification while forcibly releasing the pooled connections", x);
+            // We could not call the listeners for all entries, but at least the following
+            // pool.close() call will still release all resources.
+        }
         pool.close();
     }
 
@@ -474,15 +518,17 @@ public abstract class AbstractConnectionPool extends ContainerLifeCycle implemen
     @Override
     public String toString()
     {
-        return String.format("%s@%x[c=%d/%d/%d,a=%d,i=%d,q=%d]",
+        return String.format("%s@%x[s=%s,c=%d/%d/%d,a=%d,i=%d,q=%d,p=%s]",
             getClass().getSimpleName(),
             hashCode(),
+            getState(),
             getPendingConnectionCount(),
             getConnectionCount(),
             getMaxConnectionCount(),
             getActiveConnectionCount(),
             getIdleConnectionCount(),
-            destination.getQueuedRequestCount());
+            destination.getQueuedRequestCount(),
+            pool);
     }
 
     private class FutureConnection extends Promise.Completable<Connection>
@@ -532,7 +578,7 @@ public abstract class AbstractConnectionPool extends ContainerLifeCycle implemen
     private static class EntryHolder
     {
         private final Pool<Connection>.Entry entry;
-        private final long creationTimestamp = System.nanoTime();
+        private final long creationNanoTime = NanoTime.now();
 
         private EntryHolder(Pool<Connection>.Entry entry)
         {
@@ -541,7 +587,7 @@ public abstract class AbstractConnectionPool extends ContainerLifeCycle implemen
 
         private boolean isExpired(long timeoutNanos)
         {
-            return System.nanoTime() - creationTimestamp >= timeoutNanos;
+            return NanoTime.since(creationNanoTime) >= timeoutNanos;
         }
     }
 }

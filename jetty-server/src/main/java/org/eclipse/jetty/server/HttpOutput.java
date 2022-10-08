@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -23,7 +23,6 @@ import java.nio.charset.Charset;
 import java.nio.charset.CharsetEncoder;
 import java.nio.charset.CoderResult;
 import java.nio.charset.CodingErrorAction;
-import java.util.ResourceBundle;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.TimeUnit;
 import javax.servlet.RequestDispatcher;
@@ -39,6 +38,7 @@ import org.eclipse.jetty.util.BufferUtil;
 import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.IO;
 import org.eclipse.jetty.util.IteratingCallback;
+import org.eclipse.jetty.util.NanoTime;
 import org.eclipse.jetty.util.SharedBlockingCallback;
 import org.eclipse.jetty.util.SharedBlockingCallback.Blocker;
 import org.eclipse.jetty.util.thread.AutoLock;
@@ -185,7 +185,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
     private Interceptor _interceptor;
     private long _written;
     private long _flushed;
-    private long _firstByteTimeStamp = -1;
+    private long _firstByteNanoTime = -1;
     private ByteBuffer _aggregate;
     private int _bufferSize;
     private int _commitSize;
@@ -258,13 +258,13 @@ public class HttpOutput extends ServletOutputStream implements Runnable
 
     private void channelWrite(ByteBuffer content, boolean last, Callback callback)
     {
-        if (_firstByteTimeStamp == -1)
+        if (_firstByteNanoTime == -1)
         {
             long minDataRate = getHttpChannel().getHttpConfiguration().getMinResponseDataRate();
             if (minDataRate > 0)
-                _firstByteTimeStamp = System.nanoTime();
+                _firstByteNanoTime = NanoTime.now();
             else
-                _firstByteTimeStamp = Long.MAX_VALUE;
+                _firstByteNanoTime = Long.MAX_VALUE;
         }
 
         _interceptor.write(content, last, callback);
@@ -627,6 +627,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
                 catch (Throwable t)
                 {
                     onWriteComplete(true, t);
+                    throw t;
                 }
             }
         }
@@ -725,7 +726,9 @@ public class HttpOutput extends ServletOutputStream implements Runnable
         }
 
         if (content == null)
+        {
             new AsyncFlush(false).iterate();
+        }
         else
         {
             try
@@ -847,10 +850,12 @@ public class HttpOutput extends ServletOutputStream implements Runnable
         // Blocking write
         try
         {
+            boolean complete = false;
             // flush any content from the aggregate
             if (BufferUtil.hasContent(_aggregate))
             {
-                channelWrite(_aggregate, last && len == 0);
+                complete = last && len == 0;
+                channelWrite(_aggregate, complete);
 
                 // should we fill aggregate again from the buffer?
                 if (len > 0 && !last && len <= _commitSize && len <= maximizeAggregateSpace())
@@ -880,7 +885,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
                 }
                 channelWrite(view, last);
             }
-            else if (last)
+            else if (last && !complete)
             {
                 channelWrite(BufferUtil.EMPTY_BUFFER, true);
             }
@@ -907,7 +912,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
         {
             checkWritable();
             long written = _written + len;
-            last = _channel.getResponse().isAllContentWritten(_written);
+            last = _channel.getResponse().isAllContentWritten(written);
             flush = last || len > 0 || BufferUtil.hasContent(_aggregate);
 
             if (last && _state == State.OPEN)
@@ -951,13 +956,17 @@ public class HttpOutput extends ServletOutputStream implements Runnable
             {
                 // Blocking write
                 // flush any content from the aggregate
+                boolean complete = false;
                 if (BufferUtil.hasContent(_aggregate))
-                    channelWrite(_aggregate, last && len == 0);
+                {
+                    complete = last && len == 0;
+                    channelWrite(_aggregate, complete);
+                }
 
                 // write any remaining content in the buffer directly
                 if (len > 0)
                     channelWrite(buffer, last);
-                else if (last)
+                else if (last && !complete)
                     channelWrite(BufferUtil.EMPTY_BUFFER, true);
 
                 onWriteComplete(last, null);
@@ -1365,11 +1374,11 @@ public class HttpOutput extends ServletOutputStream implements Runnable
      */
     public void onFlushed(long bytes) throws IOException
     {
-        if (_firstByteTimeStamp == -1 || _firstByteTimeStamp == Long.MAX_VALUE)
+        if (_firstByteNanoTime == -1 || _firstByteNanoTime == Long.MAX_VALUE)
             return;
         long minDataRate = getHttpChannel().getHttpConfiguration().getMinResponseDataRate();
         _flushed += bytes;
-        long elapsed = System.nanoTime() - _firstByteTimeStamp;
+        long elapsed = NanoTime.since(_firstByteNanoTime);
         long minFlushed = minDataRate * TimeUnit.NANOSECONDS.toMillis(elapsed) / TimeUnit.SECONDS.toMillis(1);
         if (LOG.isDebugEnabled())
             LOG.debug("Flushed bytes min/actual {}/{}", minFlushed, _flushed);
@@ -1398,7 +1407,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
             _written = 0;
             _writeListener = null;
             _onError = null;
-            _firstByteTimeStamp = -1;
+            _firstByteNanoTime = -1;
             _flushed = 0;
             _closedCallback = null;
         }
@@ -1528,7 +1537,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
     {
         final boolean _last;
 
-        ChannelWriteCB(boolean last)
+        private ChannelWriteCB(boolean last)
         {
             _last = last;
         }
@@ -1554,12 +1563,18 @@ public class HttpOutput extends ServletOutputStream implements Runnable
 
     private abstract class NestedChannelWriteCB extends ChannelWriteCB
     {
-        final Callback _callback;
+        private final Callback _callback;
 
-        NestedChannelWriteCB(Callback callback, boolean last)
+        private NestedChannelWriteCB(Callback callback, boolean last)
         {
             super(last);
             _callback = callback;
+        }
+
+        @Override
+        public InvocationType getInvocationType()
+        {
+            return _callback.getInvocationType();
         }
 
         @Override
@@ -1596,9 +1611,9 @@ public class HttpOutput extends ServletOutputStream implements Runnable
 
     private class AsyncFlush extends ChannelWriteCB
     {
-        volatile boolean _flushed;
+        private volatile boolean _flushed;
 
-        AsyncFlush(boolean last)
+        private AsyncFlush(boolean last)
         {
             super(last);
         }
@@ -1631,7 +1646,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
         private final int _len;
         private boolean _completed;
 
-        AsyncWrite(byte[] b, int off, int len, boolean last)
+        private AsyncWrite(byte[] b, int off, int len, boolean last)
         {
             super(last);
             _buffer = ByteBuffer.wrap(b, off, len);
@@ -1640,7 +1655,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
             _slice = _len < getBufferSize() ? null : _buffer.duplicate();
         }
 
-        AsyncWrite(ByteBuffer buffer, boolean last)
+        private AsyncWrite(ByteBuffer buffer, boolean last)
         {
             super(last);
             _buffer = buffer;
@@ -1728,7 +1743,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
         private boolean _eof;
         private boolean _closed;
 
-        InputStreamWritingCB(InputStream in, Callback callback)
+        private InputStreamWritingCB(InputStream in, Callback callback)
         {
             super(callback, true);
             _in = in;
@@ -1804,7 +1819,7 @@ public class HttpOutput extends ServletOutputStream implements Runnable
         private boolean _eof;
         private boolean _closed;
 
-        ReadableByteChannelWritingCB(ReadableByteChannel in, Callback callback)
+        private ReadableByteChannelWritingCB(ReadableByteChannel in, Callback callback)
         {
             super(callback, true);
             _in = in;
@@ -1875,6 +1890,12 @@ public class HttpOutput extends ServletOutputStream implements Runnable
         public void failed(Throwable x)
         {
             onWriteComplete(true, x);
+        }
+
+        @Override
+        public InvocationType getInvocationType()
+        {
+            return InvocationType.NON_BLOCKING;
         }
     }
 }

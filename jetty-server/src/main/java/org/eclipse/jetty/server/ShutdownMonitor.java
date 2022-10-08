@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -30,6 +30,7 @@ import java.util.Set;
 import java.util.function.Predicate;
 
 import org.eclipse.jetty.util.IO;
+import org.eclipse.jetty.util.StringUtil;
 import org.eclipse.jetty.util.component.Destroyable;
 import org.eclipse.jetty.util.component.LifeCycle;
 import org.eclipse.jetty.util.thread.AutoLock;
@@ -87,7 +88,7 @@ public class ShutdownMonitor
     private final String host;
     private int port;
     private String key;
-    private boolean exitVm;
+    private boolean exitVm = true;
     private boolean alive;
 
     /**
@@ -104,7 +105,8 @@ public class ShutdownMonitor
         this.host = System.getProperty("STOP.HOST", "127.0.0.1");
         this.port = Integer.getInteger("STOP.PORT", -1);
         this.key = System.getProperty("STOP.KEY", null);
-        this.exitVm = true;
+        //only change the default exitVm setting if STOP.EXIT is explicitly set
+        this.exitVm = Boolean.valueOf(System.getProperty("STOP.EXIT", "true"));
     }
 
     private void addLifeCycles(LifeCycle... lifeCycles)
@@ -205,7 +207,7 @@ public class ShutdownMonitor
         }
     }
 
-    protected void start() throws Exception
+    public void start() throws Exception
     {
         try (AutoLock l = _lock.lock())
         {
@@ -236,7 +238,7 @@ public class ShutdownMonitor
     }
 
     // For test purposes only.
-    void await() throws InterruptedException
+    public void await() throws InterruptedException
     {
         try (AutoLock.WithCondition l = _lock.lock())
         {
@@ -305,6 +307,8 @@ public class ShutdownMonitor
             // establish the port and key that are in use
             debug("STOP.PORT=%d", port);
             debug("STOP.KEY=%s", key);
+            //also show if we're exiting the jvm or not
+            debug("STOP.EXIT=%b", exitVm);
         }
     }
 
@@ -406,6 +410,10 @@ public class ShutdownMonitor
                         {
                             // Reply to client
                             informClient(out, "OK\r\n");
+                        }
+                        else if ("pid".equalsIgnoreCase(cmd))
+                        {
+                            informClient(out, Long.toString(ProcessHandle.current().pid()));
                         }
                     }
                     catch (Throwable x)

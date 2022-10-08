@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -45,6 +45,8 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
 import org.eclipse.jetty.http.pathmap.MappedResource;
+import org.eclipse.jetty.http.pathmap.MatchedPath;
+import org.eclipse.jetty.http.pathmap.MatchedResource;
 import org.eclipse.jetty.http.pathmap.PathMappings;
 import org.eclipse.jetty.http.pathmap.PathSpec;
 import org.eclipse.jetty.http.pathmap.ServletPathSpec;
@@ -353,6 +355,24 @@ public class ServletHandler extends ScopedHandler
         return _filters.toArray(new FilterHolder[0]);
     }
 
+    /**
+     * ServletHolder matching path.
+     *
+     * @param target Path within _context or servlet name
+     * @return PathMap Entries pathspec to ServletHolder
+     * @deprecated Use {@link #getMatchedServlet(String)} instead
+     */
+    @Deprecated
+    public MappedResource<MappedServlet> getHolderEntry(String target)
+    {
+        if (target.startsWith("/"))
+        {
+            MatchedResource<MappedServlet> matchedResource = getMatchedServlet(target);
+            return new MappedResource<>(matchedResource.getPathSpec(), matchedResource.getResource());
+        }
+        return null;
+    }
+
     public ServletContext getServletContext()
     {
         return _servletContext;
@@ -439,14 +459,15 @@ public class ServletHandler extends ScopedHandler
         ServletHolder servletHolder = null;
         UserIdentity.Scope oldScope = null;
 
-        MappedServlet mappedServlet = getMappedServlet(target);
-        if (mappedServlet != null)
+        MatchedResource<MappedServlet> matched = getMatchedServlet(target);
+        if (matched != null)
         {
+            MappedServlet mappedServlet = matched.getResource();
             servletHolder = mappedServlet.getServletHolder();
-            ServletPathMapping servletPathMapping = mappedServlet.getServletPathMapping(target);
+            ServletPathMapping servletPathMapping = mappedServlet.getServletPathMapping(target, matched.getMatchedPath());
+
             if (servletPathMapping != null)
             {
-                // Setting the servletPathMapping also provides the servletPath and pathInfo
                 baseRequest.setServletPathMapping(servletPathMapping);
             }
         }
@@ -516,28 +537,42 @@ public class ServletHandler extends ScopedHandler
     }
 
     /**
-     * Get MappedServlet for target.
+     * ServletHolder matching target path.
      *
      * @param target Path within _context or servlet name
-     * @return MappedServlet matched by path or name.  Named servlets have a null PathSpec
+     * @return MatchedResource, pointing to the {@link MappedResource} for the {@link ServletHolder}, and also the pathspec specific name/info sections for the match.
+     *      Named servlets have a null PathSpec and {@link MatchedResource}.
      */
-    public MappedServlet getMappedServlet(String target)
+    public MatchedResource<MappedServlet> getMatchedServlet(String target)
     {
         if (target.startsWith("/"))
         {
             if (_servletPathMap == null)
                 return null;
-
-            MappedResource<MappedServlet> match = _servletPathMap.getMatch(target);
-            if (match == null)
-                return null;
-            return match.getResource();
+            return _servletPathMap.getMatched(target);
         }
 
-        return _servletNameMap.get(target);
+        MappedServlet holder = _servletNameMap.get(target);
+        if (holder == null)
+            return null;
+        return new MatchedResource<>(holder, null, MatchedPath.EMPTY);
     }
 
-    private FilterChain getFilterChain(Request baseRequest, String pathInContext, ServletHolder servletHolder)
+    /**
+     * ServletHolder matching path.
+     *
+     * @param target Path within _context or servlet name
+     * @return MappedResource to the ServletHolder.  Named servlets have a null PathSpec
+     * @deprecated use {@link #getMatchedServlet(String)} instead
+     */
+    @Deprecated
+    public MappedServlet getMappedServlet(String target)
+    {
+        MatchedResource<MappedServlet> matchedResource = getMatchedServlet(target);
+        return matchedResource.getResource();
+    }
+
+    protected FilterChain getFilterChain(Request baseRequest, String pathInContext, ServletHolder servletHolder)
     {
         Objects.requireNonNull(servletHolder);
         String key = pathInContext == null ? servletHolder.getName() : pathInContext;
@@ -1195,6 +1230,34 @@ public class ServletHandler extends ScopedHandler
         }
     }
 
+    public void removeFilterHolder(FilterHolder holder)
+    {
+        if (holder == null)
+            return;
+
+        try (AutoLock ignored = lock())
+        {
+            FilterHolder[] holders = Arrays.stream(getFilters())
+                .filter(h -> h != holder)
+                .toArray(FilterHolder[]::new);
+            setFilters(holders);
+        }
+    }
+
+    public void removeFilterMapping(FilterMapping mapping)
+    {
+        if (mapping == null)
+            return;
+
+        try (AutoLock ignored = lock())
+        {
+            FilterMapping[] mappings = Arrays.stream(getFilterMappings())
+                .filter(m -> m != mapping)
+                .toArray(FilterMapping[]::new);
+            setFilterMappings(mappings);
+        }
+    }
+
     protected void updateNameMappings()
     {
         try (AutoLock ignored = lock())
@@ -1216,6 +1279,12 @@ public class ServletHandler extends ScopedHandler
                 servlet.setServletHandler(this);
             }
         }
+    }
+
+    protected PathSpec asPathSpec(String pathSpec)
+    {
+        // By default only allow servlet path specs
+        return new ServletPathSpec(pathSpec);
     }
 
     protected void updateMappings()
@@ -1326,9 +1395,9 @@ public class ServletHandler extends ScopedHandler
                         finalMapping.getServletName(),
                         getServlet(finalMapping.getServletName()).getSource());
 
-                ServletPathSpec servletPathSpec = new ServletPathSpec(pathSpec);
-                MappedServlet mappedServlet = new MappedServlet(servletPathSpec, getServlet(finalMapping.getServletName()));
-                pm.put(servletPathSpec, mappedServlet);
+                PathSpec ps = asPathSpec(pathSpec);
+                MappedServlet mappedServlet = new MappedServlet(ps, getServlet(finalMapping.getServletName()));
+                pm.put(ps, mappedServlet);
             }
 
             _servletPathMap = pm;
@@ -1494,8 +1563,10 @@ public class ServletHandler extends ScopedHandler
                 switch (pathSpec.getGroup())
                 {
                     case EXACT:
+                        _servletPathMapping = new ServletPathMapping(_pathSpec, _servletHolder.getName(), _pathSpec.getDeclaration());
+                        break;
                     case ROOT:
-                        _servletPathMapping = new ServletPathMapping(_pathSpec, _servletHolder.getName(), _pathSpec.getPrefix());
+                        _servletPathMapping = new ServletPathMapping(_pathSpec, _servletHolder.getName(), "/");
                         break;
                     default:
                         _servletPathMapping = null;
@@ -1518,12 +1589,12 @@ public class ServletHandler extends ScopedHandler
             return _servletHolder;
         }
 
-        public ServletPathMapping getServletPathMapping(String pathInContext)
+        public ServletPathMapping getServletPathMapping(String pathInContext, MatchedPath matchedPath)
         {
             if (_servletPathMapping != null)
                 return _servletPathMapping;
             if (_pathSpec != null)
-                return new ServletPathMapping(_pathSpec, _servletHolder.getName(), pathInContext);
+                return new ServletPathMapping(_pathSpec, _servletHolder.getName(), pathInContext, matchedPath);
             return null;
         }
 
@@ -1579,6 +1650,11 @@ public class ServletHandler extends ScopedHandler
         {
             Objects.requireNonNull(holder);
             _servletHolder = holder;
+        }
+
+        public ServletHolder getServletHolder()
+        {
+            return _servletHolder;
         }
 
         @Override

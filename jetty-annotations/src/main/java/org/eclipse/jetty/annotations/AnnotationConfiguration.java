@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -18,7 +18,6 @@ import java.net.MalformedURLException;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -47,6 +46,7 @@ import org.eclipse.jetty.servlet.Source.Origin;
 import org.eclipse.jetty.util.JavaVersion;
 import org.eclipse.jetty.util.Loader;
 import org.eclipse.jetty.util.MultiException;
+import org.eclipse.jetty.util.NanoTime;
 import org.eclipse.jetty.util.ProcessorUtils;
 import org.eclipse.jetty.util.StringUtil;
 import org.eclipse.jetty.util.TypeUtil;
@@ -98,43 +98,30 @@ public class AnnotationConfiguration extends AbstractConfiguration
     {
         addDependencies(WebXmlConfiguration.class, MetaInfConfiguration.class, FragmentConfiguration.class, PlusConfiguration.class);
         addDependents(JettyWebXmlConfiguration.class);
-        protectAndExpose("org.eclipse.jetty.util.annotations.");
         hide("org.objectweb.asm.");
     }
 
     /**
-     * TimeStatistic
-     *
      * Simple class to capture elapsed time of an operation.
      */
-    public class TimeStatistic
+    public static class TimeStatistic
     {
         public long _start = 0;
         public long _end = 0;
 
         public void start()
         {
-            _start = System.nanoTime();
+            _start = NanoTime.now();
         }
 
         public void end()
         {
-            _end = System.nanoTime();
+            _end = NanoTime.now();
         }
 
-        public long getStart()
+        public long getElapsedNanos()
         {
-            return _start;
-        }
-
-        public long getEnd()
-        {
-            return _end;
-        }
-
-        public long getElapsed()
-        {
-            return (_end > _start ? (_end - _start) : 0);
+            return NanoTime.elapsed(_start, _end);
         }
     }
 
@@ -533,7 +520,7 @@ public class AnnotationConfiguration extends AbstractConfiguration
         //scan non-excluded, non medatadata-complete jars in web-inf lib
         parseWebInfLib(context, parser);
 
-        long start = System.nanoTime();
+        long start = NanoTime.now();
 
         //execute scan, either effectively synchronously (1 thread only), or asynchronously (limited by number of processors available) 
         final Semaphore task_limit = (isUseMultiThreading(context) ? new Semaphore(ProcessorUtils.availableProcessors()) : new Semaphore(1));
@@ -566,15 +553,14 @@ public class AnnotationConfiguration extends AbstractConfiguration
         }
 
         boolean timeout = !latch.await(getMaxScanWait(context), TimeUnit.SECONDS);
-        long elapsedMs = TimeUnit.MILLISECONDS.convert(System.nanoTime() - start, TimeUnit.NANOSECONDS);
-
+        long elapsedMs = NanoTime.millisSince(start);
 
         if (LOG.isDebugEnabled())
         {
             LOG.debug("Annotation scanning elapsed time={}ms", elapsedMs);
             for (ParserTask p : _parserTasks)
             {
-                LOG.debug("Scanned {} in {}ms", p.getResource(), TimeUnit.MILLISECONDS.convert(p.getStatistic().getElapsed(), TimeUnit.NANOSECONDS));
+                LOG.debug("Scanned {} in {}ms", p.getResource(), TimeUnit.NANOSECONDS.toMillis(p.getStatistic().getElapsedNanos()));
             }
 
             LOG.debug("Scanned {} container path jars, {} WEB-INF/lib jars, {} WEB-INF/classes dirs in {}ms for context {}",
@@ -872,9 +858,7 @@ public class AnnotationConfiguration extends AbstractConfiguration
         ArrayList<ServletContainerInitializer> nonExcludedInitializers = new ArrayList<ServletContainerInitializer>();
 
         //We use the ServiceLoader mechanism to find the ServletContainerInitializer classes to inspect
-        long start = 0;
-        if (LOG.isDebugEnabled())
-            start = System.nanoTime();
+        long start = NanoTime.now();
         List<ServletContainerInitializer> scis = TypeUtil.serviceProviderStream(ServiceLoader.load(ServletContainerInitializer.class)).flatMap(provider ->
         {
             try
@@ -893,7 +877,7 @@ public class AnnotationConfiguration extends AbstractConfiguration
         }).collect(Collectors.toList());
 
         if (LOG.isDebugEnabled())
-            LOG.debug("Service loaders found in {}ms", (TimeUnit.MILLISECONDS.convert((System.nanoTime() - start), TimeUnit.NANOSECONDS)));
+            LOG.debug("Service loaders found in {}ms", NanoTime.millisSince(start));
 
         Map<ServletContainerInitializer, Resource> sciResourceMap = new HashMap<>();
         ServletContainerInitializerOrdering initializerOrdering = getInitializerOrdering(context);

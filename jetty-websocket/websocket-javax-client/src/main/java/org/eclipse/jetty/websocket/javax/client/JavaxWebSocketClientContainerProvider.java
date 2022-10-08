@@ -1,6 +1,6 @@
 //
 // ========================================================================
-// Copyright (c) 1995-2021 Mort Bay Consulting Pty Ltd and others.
+// Copyright (c) 1995-2022 Mort Bay Consulting Pty Ltd and others.
 //
 // This program and the accompanying materials are made available under the
 // terms of the Eclipse Public License v. 2.0 which is available at
@@ -60,7 +60,7 @@ public class JavaxWebSocketClientContainerProvider extends ContainerProvider
      * @param httpClient a pre-configured {@link HttpClient} to be used by the implementation.
      * @see #getContainer()
      */
-    public WebSocketContainer getContainer(HttpClient httpClient)
+    public static WebSocketContainer getContainer(HttpClient httpClient)
     {
         JavaxWebSocketClientContainer clientContainer = new JavaxWebSocketClientContainer(httpClient);
         // See: https://github.com/eclipse-ee4j/websocket-api/issues/212
