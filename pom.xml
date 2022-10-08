@@ -1236,7 +1236,7 @@
       <dependency>
         <groupId>com.github.jnr</groupId>
         <artifactId>jnr-enxio</artifactId>
-        <version>0.32.1</version>
+        <version>0.32.13</version>
       </dependency>
       <dependency>
         <groupId>com.github.jnr</groupId>
