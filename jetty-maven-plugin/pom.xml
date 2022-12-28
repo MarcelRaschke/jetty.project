@@ -2,7 +2,7 @@
   <parent>
     <groupId>org.eclipse.jetty</groupId>
     <artifactId>jetty-project</artifactId>
-    <version>10.0.13-SNAPSHOT</version>
+    <version>10.0.14-SNAPSHOT</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
   <artifactId>jetty-maven-plugin</artifactId>
@@ -257,6 +257,7 @@
       <artifactId>jetty-home</artifactId>
       <scope>test</scope>
       <type>zip</type>
+      <optional>true</optional>
       <exclusions>
         <!-- eliminating dependencies of jetty-home that are being pulled in when in reactor
              for the jetty build itself.  This can cause accidental cyclic references. -->

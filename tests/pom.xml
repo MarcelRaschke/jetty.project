@@ -4,7 +4,7 @@
   <parent>
     <groupId>org.eclipse.jetty</groupId>
     <artifactId>jetty-project</artifactId>
-    <version>10.0.13-SNAPSHOT</version>
+    <version>10.0.14-SNAPSHOT</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
   <groupId>org.eclipse.jetty.tests</groupId>
@@ -20,6 +20,7 @@
   <modules>
     <module>jetty-jmh</module>
     <module>jetty-http-tools</module>
+    <module>jetty-home-tester</module>
     <module>test-webapps</module>
     <module>test-sessions</module>
     <module>test-loginservice</module>
